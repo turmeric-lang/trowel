@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QFont>
 #include <QRect>
 #include <QString>
 #include <QStringList>
@@ -29,9 +30,10 @@ public:
 
     void setColors(const QColor& bg, const QColor& fg, const QColor& divider);
     void setActiveFg(const QColor& fg);
-    // Which edge the 1px divider rule is drawn on. Default Top (document tabs,
-    // which sit above their content); a bottom-mounted pane bar sets Bottom so
-    // the rule sits on top of the pane rather than under it.
+    // Which edge of this widget the 1px divider rule is drawn on — literally,
+    // `Top` is y=0. Default Bottom: document tabs sit above their content and
+    // want the rule under them. A bottom-mounted pane bar sets Top so the rule
+    // separates it from the pane above rather than tracing the window's edge.
     enum class DividerEdge { Top, Bottom };
     void setDividerEdge(DividerEdge edge);
 
@@ -60,6 +62,9 @@ private:
 
     void relayout();
     void updateFixedHeight();
+    // The font labels are drawn in (bold). Measure with this, never with
+    // font() — see the definition.
+    QFont labelFont() const;
     int tabAt(const QPoint& p) const;
     bool closeHit(int index, const QPoint& p) const;
     int contentWidth() const;
@@ -81,7 +86,7 @@ private:
     QColor fg_;
     QColor activeFg_;
     QColor divider_;
-    DividerEdge dividerEdge_ = DividerEdge::Top;
+    DividerEdge dividerEdge_ = DividerEdge::Bottom;
     int scrollOffset_ = 0;
 };
 

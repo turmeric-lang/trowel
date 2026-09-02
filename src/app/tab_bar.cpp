@@ -109,15 +109,30 @@ void TabBar::setTooltip(int index, const QString& tip) {
     if (index < static_cast<int>(geoms_.size())) geoms_[index].tooltip = tip;
 }
 
+// The font labels are actually drawn in. Tab labels are bold, and bold is
+// wider — so measuring in the regular font under-allocated every tab by the
+// difference and the label was clipped by drawText. A closable tab hid it: the
+// 24px close slot is slack the text can spill into. "Debugger" is not closable,
+// so its text area is exactly the measured width and the final `r` was cut off.
+//
+// One function for the whole class rather than a bold QFont built at each of
+// the three sites, because "measure it the way you draw it" is the invariant
+// that broke.
+QFont TabBar::labelFont() const {
+    QFont f = font();
+    f.setBold(true);
+    return f;
+}
+
 void TabBar::updateFixedHeight() {
-    const int h = fontMetrics().height() + 2 * kVPad;
+    const int h = QFontMetrics(labelFont()).height() + 2 * kVPad;
     setFixedHeight(h);
 }
 
 void TabBar::relayout() {
     geoms_.clear();
     geoms_.reserve(names_.size());
-    const QFontMetrics fm(font());
+    const QFontMetrics fm(labelFont());
     int x = 0;
     const int h = height();
     for (int i = 0; i < names_.size(); ++i) {
@@ -216,8 +231,15 @@ void TabBar::paintEvent(QPaintEvent*) {
     // 1px border on the edge away from the content. Document tabs sit above
     // their content, so the rule is on the bottom; a bottom-mounted pane bar
     // puts the rule on top so it reads as the pane's top edge.
+    //
+    // These two were swapped: `Top` drew at height()-1 and `Bottom` at 0. The
+    // document bar looked right only because its default was `Top` and it
+    // wanted the line at the bottom, so the two errors cancelled. The pane bar
+    // asked for `Top` and got a rule along the very bottom of the window,
+    // where the macOS window bevel sits right under it — and no rule above it
+    // separating it from the pane, which is the one it actually needed.
     p.setPen(divider_);
-    if (dividerEdge_ == DividerEdge::Bottom) {
+    if (dividerEdge_ == DividerEdge::Top) {
         p.drawLine(0, 0, width(), 0);
     } else {
         p.drawLine(0, height() - 1, width(), height() - 1);
@@ -247,9 +269,7 @@ void TabBar::paintEvent(QPaintEvent*) {
         // close slot; a non-closable one insets by kHPad instead, so its label
         // keeps the same padding on both sides rather than hugging the divider.
         QRect textRect = g.rect.adjusted(kHPad, 0, -(closable ? closeSlot : kHPad), -2);
-        QFont f = font();
-        f.setBold(true);
-        p.setFont(f);
+        p.setFont(labelFont());
         p.setPen(i == active_ ? activeFg_ : fg_);
         p.drawText(textRect, Qt::AlignCenter, g.label);
 

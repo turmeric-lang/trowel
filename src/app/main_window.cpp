@@ -198,6 +198,19 @@ void MainWindow::setupUi() {
     // `messageChanged` fires with an empty string both when a timed message
     // expires and when one is cleared, which is exactly the condition.
     statusBar()->setSizeGripEnabled(false);
+    // No border, and the theme's colours rather than Qt's defaults.
+    //
+    // The default draws a rule along the bar's bottom edge — which is the
+    // window's bottom edge, so it lands directly against the macOS window
+    // bevel and reads as a rendering seam rather than as a divider. There is
+    // nothing below it to divide it from.
+    //
+    // `QStatusBar::item` is set separately: it is the frame Qt puts around
+    // each message widget, and it survives a border rule aimed at the bar.
+    statusBar()->setStyleSheet(QString(
+        "QStatusBar { background: %1; color: %2; border: none; }"
+        "QStatusBar::item { border: none; }"
+    ).arg(theme.editorBg.name(), theme.editorFg.name()));
     statusBar()->hide();
     connect(statusBar(), &QStatusBar::messageChanged, this,
             [this](const QString& text) {

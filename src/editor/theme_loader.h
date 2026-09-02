@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QFont>
 #include <QHash>
 #include <QString>
 
@@ -53,6 +54,15 @@ struct Theme {
 
     QHash<QString, StyleSpec> styles;
 };
+
+// The monospace font every preformatted surface renders in — the REPL
+// terminal and the debugger's console and evaluate line.
+//
+// One function, because the two had drifted: the debugger hardcoded "Menlo"
+// and inherited whatever point size the widget defaulted to (13 on macOS),
+// while the REPL asked for Iosevka-or-Menlo at 12. The same program output was
+// a point larger in one pane than the other, in a different face.
+QFont MonospaceUiFont();
 
 // Load the built-in "Turmeric Dark" theme from the Qt resource bundle.
 Theme LoadBuiltinDarkTheme();

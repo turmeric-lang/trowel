@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <QAction>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -129,6 +130,8 @@ DebuggerView::DebuggerView(QWidget* parent)
     , variables_(new PlaceholderTree(QStringLiteral("No locals.\nThey appear when the program stops."), this))
     , breakpoints_(new PlaceholderTree(QStringLiteral("No breakpoints.\nClick the gutter, or press F9."), this))
     , console_(new QPlainTextEdit(this))
+    , evalRow_(new QWidget(this))
+    , evalPrompt_(new QLabel(this))
     , evalInput_(new QLineEdit(this))
 {
     auto* layout = new QVBoxLayout(this);
@@ -310,14 +313,19 @@ DebuggerView::DebuggerView(QWidget* parent)
     console_->setFrameShape(QFrame::NoFrame);
     console_->setPlaceholderText(
         QStringLiteral("Program output appears here while a session runs."));
-    QFont mono = console_->font();
-    mono.setFamily("Menlo");
-    mono.setStyleHint(QFont::Monospace);
+    const QFont mono = MonospaceUiFont();
     console_->setFont(mono);
     evalInput_->setFont(mono);
     evalInput_->setFrame(false);
-    evalInput_->setPlaceholderText(QStringLiteral("Evaluate in the selected frame…"));
-    evalInput_->setTextMargins(6, 3, 6, 3);
+    // No placeholder while it is usable. The prompt beside it already says
+    // what the line is, the same way a REPL's does — and a REPL waiting for
+    // input shows a prompt and a caret, not a sentence about itself. The
+    // placeholder is reclaimed for the disabled case, where there is something
+    // worth saying: why you cannot type here. See setEvaluateEnabled.
+    evalInput_->setPlaceholderText(QString());
+    // Left margin 0: the prompt label supplies the left inset, so the caret
+    // sits one space after `turi>` rather than a padding's width further on.
+    evalInput_->setTextMargins(0, 3, 6, 3);
     connect(evalInput_, &QLineEdit::returnPressed, this, [this] {
         const QString expr = evalInput_->text().trimmed();
         if (expr.isEmpty()) return;
@@ -325,12 +333,33 @@ DebuggerView::DebuggerView(QWidget* parent)
         emit evaluateRequested(expr);
     });
 
+    // `turi>`, not `turmeric>`: the REPL pane runs `tur repl` and prompts
+    // `turmeric>`, but this line is evaluated by the interpreter through
+    // `tur dap`, and `turi>` is what the interpreter is called throughout the
+    // toolchain. Two different evaluators, two different prompts, on purpose.
+    evalPrompt_->setText(QStringLiteral("turi>"));
+    evalPrompt_->setFont(mono);
+    // The prompt belongs to the input: clicking it focuses the line, which is
+    // what a click on a prompt should do.
+    evalPrompt_->setBuddy(evalInput_);
+    evalPrompt_->setObjectName(QStringLiteral("evalPrompt"));
+
+    // The prompt and the field are one control, so the rule that separates
+    // them from the console above spans both — it lives on the row, not on the
+    // QLineEdit, which would have left the prompt sitting above the line.
+    evalRow_->setObjectName(QStringLiteral("evalRow"));
+    auto* evalLayout = new QHBoxLayout(evalRow_);
+    evalLayout->setContentsMargins(6, 0, 0, 0);
+    evalLayout->setSpacing(6);
+    evalLayout->addWidget(evalPrompt_);
+    evalLayout->addWidget(evalInput_, 1);
+
     auto* consoleBox = new QWidget(this);
     auto* consoleLayout = new QVBoxLayout(consoleBox);
     consoleLayout->setContentsMargins(0, 0, 0, 0);
     consoleLayout->setSpacing(0);
     consoleLayout->addWidget(console_, 1);
-    consoleLayout->addWidget(evalInput_);
+    consoleLayout->addWidget(evalRow_);
 
     // Panes above, console below, both resizable: how much of the pane the
     // stack deserves depends entirely on how deep the recursion is, and only
@@ -420,7 +449,12 @@ QHeaderView::section { background: %7; color: %3; border: none;
 QSplitter::handle { background: %5; }
 QSplitter::handle:horizontal { width: 1px; }
 QSplitter::handle:vertical { height: 1px; }
-QLineEdit { border-top: 1px solid %5; padding: 2px; }
+/* The rule sits on the row, not the field: it has to span the prompt too, or
+   it reads as a line drawn under a stray label. */
+QLineEdit { padding: 2px; }
+#evalRow { background: %1; border-top: 1px solid %5; }
+#evalPrompt { color: %8; background: transparent; }
+#evalPrompt:disabled { color: %3; }
 QScrollBar:vertical { background: %1; width: 10px; margin: 0; border: none; }
 QScrollBar:horizontal { background: %1; height: 10px; margin: 0; border: none; }
 QScrollBar::handle:vertical { background: %5; border-radius: 5px; min-height: 24px; }
@@ -564,7 +598,7 @@ void DebuggerView::setPaused(bool paused) {
     if (stopAction_) stopAction_->setEnabled(true);
     // Two independent conditions, and both have to hold: you can only evaluate
     // while paused, and only in a session that has a live frame at all.
-    evalInput_->setEnabled(paused && evaluateAllowed_);
+    setEvalLineEnabled(paused && evaluateAllowed_);
     if (paused) {
         // Reached from stateChanged(Paused), which arrives *after*
         // setRunning(true) has already put the running text in place. Without
@@ -579,7 +613,7 @@ void DebuggerView::setRunning(bool running) {
     // Stop is the only button that means anything while running.
     for (QAction* a : stepActions_) a->setEnabled(false);
     if (stopAction_) stopAction_->setEnabled(running);
-    evalInput_->setEnabled(false);
+    setEvalLineEnabled(false);
     stack_->setPlaceholder(running
         ? QStringLiteral("Running.\nThe stack appears when the program stops.")
         : QStringLiteral("No call stack.\nRun Debug Buffer to start a session."));
@@ -596,11 +630,17 @@ void DebuggerView::setReverseAvailable(bool available) {
     for (QAction* a : reverseActions_) a->setVisible(available);
 }
 
+void DebuggerView::setEvalLineEnabled(bool enabled) {
+    evalInput_->setEnabled(enabled);
+    evalPrompt_->setEnabled(enabled);
+}
+
 void DebuggerView::setEvaluateEnabled(bool enabled, const QString& whyNot) {
     evaluateAllowed_ = enabled;
-    evalInput_->setEnabled(enabled);
-    evalInput_->setPlaceholderText(
-        enabled ? QStringLiteral("Evaluate in the selected frame…") : whyNot);
+    setEvalLineEnabled(enabled);
+    // Empty when it works: the prompt is the whole affordance. The reason it
+    // does not work is the only thing worth spending the placeholder on.
+    evalInput_->setPlaceholderText(enabled ? QString() : whyNot);
 }
 
 }

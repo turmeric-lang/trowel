@@ -7,6 +7,7 @@
 #include <ScintillaEdit.h>
 
 #include <QFile>
+#include <QFontDatabase>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -197,6 +198,20 @@ const QHash<QString, int>& StyleKeyMap() {
     return m;
 }
 
+}
+
+QFont MonospaceUiFont() {
+    // Iosevka when the user has it, Menlo otherwise: Menlo ships with macOS,
+    // so it is the floor rather than a preference.
+    const QString family =
+        QFontDatabase::hasFamily(QStringLiteral("Iosevka")) ? QStringLiteral("Iosevka")
+                                                            : QStringLiteral("Menlo");
+    QFont f(family, 12);
+    f.setFixedPitch(true);
+    // Both set, and they do different jobs: fixedPitch is a request, styleHint
+    // is the fallback to use if neither family resolves.
+    f.setStyleHint(QFont::Monospace);
+    return f;
 }
 
 Theme LoadBuiltinDarkTheme() {

@@ -1,8 +1,8 @@
 #include "repl/terminal_view.h"
 
+#include "editor/theme_loader.h"
 #include "repl/pty_session.h"
 
-#include <QFontDatabase>
 #include <QKeyEvent>
 #include <QScrollBar>
 #include <QTextCursor>
@@ -22,10 +22,7 @@ TerminalView::TerminalView(QWidget* parent)
 }
 
 void TerminalView::applyDefaultStyling() {
-    const QString family = QFontDatabase::hasFamily("Iosevka") ? "Iosevka" : "Menlo";
-    QFont font(family, 12);
-    font.setFixedPitch(true);
-    setFont(font);
+    setFont(MonospaceUiFont());
     setStyleSheet(
         "QPlainTextEdit {"
         "  background-color: #1e1e1e;"

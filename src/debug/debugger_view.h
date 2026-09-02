@@ -134,7 +134,14 @@ private:
     PlaceholderTree* variables_;
     PlaceholderTree* breakpoints_;
     QPlainTextEdit* console_;
+    // The evaluate line: a `turi>` prompt and the field, in one row so the
+    // rule above them spans both and they read as a single REPL line.
+    QWidget* evalRow_;
+    QLabel* evalPrompt_;
     QLineEdit* evalInput_;
+    // Enable/disable the prompt and the field together — the prompt dims with
+    // the line it belongs to, rather than staying lit above a dead field.
+    void setEvalLineEnabled(bool enabled);
     // Actions kept by hand rather than read back off the toolbar by index:
     // the index arithmetic that `setPaused` used to do broke the moment the
     // reverse buttons made the toolbar's length conditional.

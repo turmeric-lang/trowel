@@ -12,23 +12,29 @@ programming language, for macOS and Linux.
 ### macOS
 
 ```
-brew install --cask rjungemann/trowel/trowel
+brew install --cask turmeric-lang/trowel/trowel
 ```
 
+> **Moved from `rjungemann/trowel`.** Trowel joined the `turmeric-lang`
+> organization on 2026-10-02. If you installed before then, run
+> `brew untap rjungemann/trowel` first — Homebrew keys its tap cache by name,
+> so it will otherwise keep serving the old tap. Git and release URLs under
+> the old name still redirect, so nothing else needs changing.
+
 > **Note the three-part name.** Use either the short token (`brew install --cask trowel`,
-> once the tap is added) or the fully-qualified `rjungemann/trowel/trowel`. The two-part
-> form `rjungemann/trowel` **will not work** — Homebrew reads it as a bare `user/repo` tap
+> once the tap is added) or the fully-qualified `turmeric-lang/trowel/trowel`. The two-part
+> form `turmeric-lang/trowel` **will not work** — Homebrew reads it as a bare `user/repo` tap
 > name rather than a cask, and fails with `Cask 'trowel' is unavailable: No Cask with this
 > name exists.` The same applies to `brew reinstall` and `brew upgrade`.
 
 Or download the notarized `.zip` from
-[the releases page](https://github.com/rjungemann/trowel/releases) and
+[the releases page](https://github.com/turmeric-lang/trowel/releases) and
 drag `Trowel.app` into `/Applications`.
 
 ### Linux
 
 Download the AppImage for your architecture (`x86_64` or `aarch64`) from
-[the releases page](https://github.com/rjungemann/trowel/releases), make it
+[the releases page](https://github.com/turmeric-lang/trowel/releases), make it
 executable, and run it:
 
 ```

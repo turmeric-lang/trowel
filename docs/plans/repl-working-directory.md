@@ -137,7 +137,7 @@ This makes B1's indicator *live* rather than start-only, and keeps
   honest. Inert when nothing emits it.
 - **B3b (Turmeric).** `:cd` / `:pwd` in `tur repl`, emitting OSC 7 on
   change and at startup —
-  [turmeric#738](https://github.com/rjungemann/turmeric/pull/738).
+  [turmeric#738](https://github.com/turmeric-lang/turmeric/pull/738).
 
 Option B proved out end-to-end: `:cd` moves the live REPL, Trowel follows
 the directory, the process id is unchanged, and a value defined before

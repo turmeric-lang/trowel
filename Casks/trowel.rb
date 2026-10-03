@@ -2,10 +2,10 @@ cask "trowel" do
   version "0.2.1"
   sha256 "6e83b29366a3af0ce5bd909d27a9f405f2ee29f15a4bd9e093e3db135299cc53"
 
-  url "https://github.com/rjungemann/trowel/releases/download/v#{version}/Trowel-#{version}.zip"
+  url "https://github.com/turmeric-lang/trowel/releases/download/v#{version}/Trowel-#{version}.zip"
   name "Trowel"
   desc "IDE for the Turmeric programming language"
-  homepage "https://github.com/rjungemann/trowel"
+  homepage "https://github.com/turmeric-lang/trowel"
 
   depends_on macos: :monterey
 

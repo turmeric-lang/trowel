@@ -216,7 +216,7 @@ target_include_directories(trowel PRIVATE "${CMAKE_BINARY_DIR}/generated")
 if(_turmeric_key)
     include(FetchContent)
     FetchContent_Declare(turmeric_prebuilt
-        URL      "https://github.com/rjungemann/turmeric/releases/download/${TROWEL_TURMERIC_VERSION}/turmeric-${TROWEL_TURMERIC_VERSION}-${_turmeric_key}.${_turmeric_ext}"
+        URL      "https://github.com/turmeric-lang/turmeric/releases/download/${TROWEL_TURMERIC_VERSION}/turmeric-${TROWEL_TURMERIC_VERSION}-${_turmeric_key}.${_turmeric_ext}"
         URL_HASH SHA256=${_turmeric_sha}
     )
     FetchContent_MakeAvailable(turmeric_prebuilt)

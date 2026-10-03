@@ -2,7 +2,7 @@
 
 Trowel is a C/C++ text editor built with CMake that embeds Scintilla and a
 terminal emulator in draggable split panes. It is purpose-built for
-[turmeric](https://github.com/rjungemann/turmeric): the editor speaks to a
+[turmeric](https://github.com/turmeric-lang/turmeric): the editor speaks to a
 persistent `tur repl` / `tur interpret` session so users can "run" a buffer and
 then poke at the resulting environment from the REPL — the same
 edit → run → inspect loop that makes Processing and DrRacket productive.

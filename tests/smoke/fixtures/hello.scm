@@ -1,0 +1,7 @@
+(define (double x) (* x 2))
+(define (main)
+  (display "scheme ran: ")
+  (display (double 21))
+  (newline)
+  0)
+(main)

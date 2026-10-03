@@ -235,3 +235,149 @@ def test_completion_list_with_a_question_mark_name_does_not_abort(
     time.sleep(0.5)
     assert trowel.call("lsp.status")["enabled"] is True
     assert trowel.call("editor.get_text")["text"].endswith("(empt")
+
+
+# --- headerless dialect files ----------------------------------------------
+#
+# `tur lsp` picks its reader from the `#lang` line in the document text and
+# ignores the file extension, where the COMPILER honours the extension. So a
+# headerless `.scm` or `.tur.sweet` file -- the idiomatic way to write either --
+# was analysed as Turmeric: bogus errors on every line and no symbols at all.
+# Reported upstream as `docs/upstream/lsp-ignores-the-file-extension.md`;
+# LspManager::shiftedText sends such a document with the header it implies
+# prepended and shifts every line number back across the boundary.
+#
+# When upstream fixes this, these tests should still pass -- the synthesized
+# header becomes redundant rather than wrong. What they are really pinning is
+# that the editor does not show errors in a file that compiles.
+
+
+def test_a_headerless_scheme_file_has_no_diagnostics(trowel, fixture_files: Path):
+    _require_server(trowel)
+    r = _open_and_analyze(trowel, fixture_files / "hello.scm")
+    assert r["count"] == 0, trowel.call("lsp.diagnostics")
+
+
+def test_a_headerless_scheme_file_has_symbols_on_the_right_lines(
+        trowel, fixture_files: Path):
+    """The symbols must also be where the BUFFER has them, not where the text
+    sent to the server has them -- that one-line shift is the whole cost of the
+    workaround, and an off-by-one here is a wrong jump on every Go to
+    Definition.
+    """
+    _require_server(trowel)
+    path = fixture_files / "hello.scm"
+    _open_and_analyze(trowel, path)
+    syms = trowel.call("lsp.symbols")["symbols"]
+    names = {s["name"]: s for s in syms}
+    assert "double" in names, syms
+
+    lines = path.read_text().splitlines()
+    got = names["double"]["line"]
+    assert 0 <= got < len(lines), f"line {got} is outside a {len(lines)}-line file"
+    assert "double" in lines[got], \
+        f"symbol 'double' reported at line {got}, which holds {lines[got]!r}"
+
+
+def test_a_headerless_sweet_file_has_no_diagnostics(trowel, fixture_files: Path):
+    # Trowel's own sweet fixtures have never carried a header, so this case was
+    # showing false `TUR-E0003 unbound symbol 'defn'` errors in the gutter.
+    _require_server(trowel)
+    r = _open_and_analyze(trowel, fixture_files / "sweet_main.tur.sweet")
+    assert r["count"] == 0, trowel.call("lsp.diagnostics")
+
+
+def test_a_file_that_already_has_a_lang_line_is_sent_unchanged(
+        trowel, tmp_path: Path):
+    """No second header, and no shift. A buffer that gains a `#lang` line while
+    open must stop getting the synthesized one -- otherwise it carries two and
+    every line is off by one.
+    """
+    _require_server(trowel)
+    src = tmp_path / "hdr.scm"
+    src.write_text("#lang r7rs\n(define (g y) (+ y 1))\n")
+    _open_and_analyze(trowel, src)
+    syms = trowel.call("lsp.symbols")["symbols"]
+    names = {s["name"]: s for s in syms}
+    assert "g" in names, syms
+    # `g` is on line 1 of the buffer (0-based), after the header it really has.
+    assert names["g"]["line"] == 1, syms
+
+
+# --- signature help and workspace symbols ----------------------------------
+#
+# Two capabilities `tur lsp` has advertised all along that nothing asked for.
+# Signature help lands on Scintilla's call tip -- the same surface as hover --
+# so it is asserted through the tip's text rather than through the manager's
+# reply: the manager having an answer and the editor showing it are different
+# claims, and only the second is the feature.
+
+
+def test_signature_help_shows_the_callees_parameter_list(trowel, fixture_files: Path):
+    _require_server(trowel)
+    # symbols.tur defines `nav-double [n : int] : int` and calls it, so there is
+    # a real callee with a real parameter to describe.
+    _open_and_analyze(trowel, fixture_files / "symbols.tur")
+
+    text = trowel.call("editor.get_text")["text"]
+    # In ARGUMENT position, not at the `(`: the server answers null at its own
+    # advertised trigger character and only returns a signature once the cursor
+    # is past the callee's name and a space. Measured; see the comment in
+    # EditorView's charAdded hook.
+    #
+    # The offset is in BYTES. Scintilla positions are byte offsets, and
+    # symbols.tur contains a `§`, so a Python character index is one short of
+    # the right spot by the time it reaches line 16 — which reads exactly like
+    # the server declining the position.
+    chars = text.index("(nav-double nav-total") + len("(nav-double ")
+    inside = len(text[:chars].encode("utf-8"))
+
+    r = trowel.call("lsp.signature_help", {"pos": inside, "timeout_ms": WAIT_MS})
+    assert "nav-double" in r["text"], r
+    # The parameter list, which is the thing you cannot see once the name is
+    # behind the cursor.
+    assert "int" in r["text"], r
+    assert r["active_parameter"] == 0, r
+
+
+def test_signature_help_is_silent_where_there_is_no_call(trowel, fixture_files: Path):
+    # No tip rather than an empty one: a call tip with nothing in it is worse
+    # than none, because it covers the line under the caret.
+    _require_server(trowel)
+    _open_and_analyze(trowel, fixture_files / "symbols.tur")
+    # The server answers `null` away from a call, and that is REPORTED as an
+    # empty signature rather than dropped -- a dropped reply is
+    # indistinguishable from one still in flight, which is why this used to
+    # surface as a control-socket timeout instead of an answer.
+    r = trowel.call("lsp.signature_help", {"pos": 0, "timeout_ms": 5000})
+    assert r["text"] == "", r
+    assert r["tip_active"] is False, r
+
+
+def test_workspace_symbols_finds_a_definition_in_another_file(
+        trowel, fixture_files: Path):
+    """The point of `workspace/symbol` over the document outline: the answer
+    comes from files other than the open one.
+    """
+    _require_server(trowel)
+    # Open one fixture, search for a symbol defined in a different one. The
+    # server has to have seen symbols.tur for this to be findable, so it is
+    # opened first and then navigated away from.
+    _open_and_analyze(trowel, fixture_files / "symbols.tur")
+    _open_and_analyze(trowel, fixture_files / "hello.tur")
+
+    r = trowel.call("lsp.workspace_symbols",
+                    {"query": "nav-double", "timeout_ms": WAIT_MS})
+    assert r["count"] >= 1, r
+    paths = [s["path"] for s in r["symbols"]]
+    assert any(p.endswith("symbols.tur") for p in paths), r
+
+
+def test_workspace_symbols_reports_no_matches_rather_than_hanging(trowel,
+                                                                 fixture_files: Path):
+    _require_server(trowel)
+    _open_and_analyze(trowel, fixture_files / "hello.tur")
+    r = trowel.call("lsp.workspace_symbols",
+                    {"query": "zzz-no-such-symbol-anywhere", "timeout_ms": WAIT_MS})
+    assert r["count"] == 0, r
+    assert r["reason"], r

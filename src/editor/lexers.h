@@ -30,6 +30,20 @@ enum class Language : int {
     Toml,
     Sh,
     Python,
+    // R7RS Scheme (`#lang r7rs`, `.scm`), and the same under SRFI-110
+    // sweet-expressions (`#lang r7rs/sweet`). Its own scanners rather than a
+    // flag on the Turmeric one: the lexeme set genuinely differs (`#true`,
+    // `#\x41`, `#(`, `#u8(`, `|bar symbols|`, radix prefixes, `,@`) and two of
+    // those rules collide with Turmeric syntax, so they have to be gated off
+    // rather than merely added. See editor/dialect.h for which `#lang` bases
+    // map onto which of these.
+    R7rs,
+    R7rsSweet,
+
+    // Keep last: the count, which the Markdown guest field's width is asserted
+    // against in lexer_adapter.cpp. The guest field is four bits with 15 as its
+    // "no recognized tag" sentinel, so ids must stay in 0..14.
+    LanguageCount,
 };
 
 // Pick a language from a file path alone. Unrecognized (and empty, i.e.
@@ -82,6 +96,12 @@ enum class TurStyle : int {
     // Sweet-expression reader markers ($ and a lone \). Only ever emitted by
     // the sweet variant of the Turmeric scanner.
     SweetMarker,
+    // Scheme's vector and bytevector prefixes, `#(` and `#u8(`.
+    SchemeVector,
+    // A Scheme `|bar symbol|`. R7RS mode only: in a Turmeric buffer `|` opens
+    // neither a symbol nor anything else, and painting it as one would swallow
+    // the `|` of `#refine{x : T | pred}`.
+    BarSymbol,
 
     Count,
 

@@ -1,0 +1,35 @@
+{
+  "geometry": {
+    "file_path": "/Users/rjungemann/Projects/trowel/tests/smoke/fixtures/symbols.tur",
+    "h": 800,
+    "splitter": [
+      675,
+      482
+    ],
+    "title": "symbols.tur \u2014 Trowel",
+    "w": 1200,
+    "x": 2,
+    "y": 2
+  },
+  "editor": {
+    "modified": false,
+    "path": "/Users/rjungemann/Projects/trowel/tests/smoke/fixtures/symbols.tur",
+    "text": ";; Fixture for the navigation features: outline kinds, definition jumps and\n;; occurrence highlighting all read this one file.\n;;\n;; It must analyze cleanly. A single rejected form empties documentSymbol and\n;; nulls every definition and hover reply for the whole file (navigation plan\n;; \u00a74.2.1), which would make these tests fail for a reason unrelated to what\n;; they check.\n(def nav-total 10)\n(defn nav-double [n : int] : int (* n 2))\n(defstruct NavPoint :copy [x : int y : int])\n(defmacro nav-twice [x] x)\n\n;; nav-total appears in this comment, and below inside a string literal.\n;; Neither is a use, and neither may be highlighted as one.\n(def nav-note \"nav-total in a string\")\n\n(defn nav-use [] : int (nav-double nav-total))\n(defn nav-use-again [] : int (+ nav-total 1))\n\n;; `list-head` is defined in the bundled stdlib, so a definition jump from here\n;; has to open a tab outside the workspace \u2014 the read-only case.\n(defn nav-stdlib [] : int (list-head (tcons 1 (tnil))))\n"
+  },
+  "cursor": {
+    "anchor": 0,
+    "col": 0,
+    "line": 0,
+    "pos": 0,
+    "selection": [
+      0,
+      0
+    ]
+  },
+  "repl_running": {
+    "running": true
+  },
+  "screen": {
+    "text": "[trowel] tur repl started in ~\n\u2597            \u2598  \n\u259c\u2598\u258c\u258c\u259b\u2598\u259b\u259b\u258c\u2588\u258c\u259b\u2598\u258c\u259b\u2598\n\u2590\u2596\u2599\u258c\u258c \u258c\u258c\u258c\u2599\u2596\u258c \u258c\u2599\u2596\n\nTurmeric v0.60.1  (type :help for help, :quit to exit)\nturmeric> "
+  }
+}

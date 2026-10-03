@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/tab_content.h"
+#include "editor/dialect.h"
 #include "editor/lexers.h"
 #include "lsp/lsp_diagnostic.h"
 #include "lsp/lsp_location.h"
@@ -153,6 +154,37 @@ public:
     bool bracketPairGuides() const { return bracketGuides_; }
     static bool bracketPairGuidesDefault();
 
+    // The `#lang` BASE dialect this buffer is written in, derived fresh from its
+    // path and current text. Not cached beside `language_`: a second cache can
+    // disagree with the first, and the callers that need a dialect (Run Buffer,
+    // Format File, the picker) all need the answer for the text as it stands
+    // right now, including a `#lang` line the user is still typing.
+    Dialect dialect() const;
+
+    // Rewrite the buffer's `#lang` line so it names `d`.
+    //
+    // The `#lang` LINE STAYS THE SOURCE OF TRUTH -- this is a text edit, not a
+    // hidden mode. Flip the picker and the header changes; type the header and
+    // the picker reconciles (both go through dialect() above). Nothing about
+    // the dialect is stored in UI state.
+    //
+    // Rules, each of which is a bug somebody already hit on the Try Turmeric
+    // side:
+    //   - no header, and `d` is the default        -> write nothing; do not
+    //     decorate a plain file with a redundant header
+    //   - no header, non-default                   -> insert as line 1, plus a
+    //     blank line
+    //   - header present                           -> replace exactly that
+    //     line, preserving everything after it
+    //   - header present, `d` is the default       -> remove the line, and the
+    //     blank line after it if there is one
+    //
+    // The whole edit is ONE undo step, so a single Ctrl+Z undoes a language
+    // switch rather than unpicking it a line at a time.
+    //
+    // Returns false when nothing needed changing.
+    bool setLangDirective(Dialect d);
+
     // Language this buffer is highlighted as, derived from its path and any
     // `#lang` directive it carries.
     Language language() const { return language_; }
@@ -210,6 +242,16 @@ public:
     // Show hover text as a call tip, stripping the markdown fences the server
     // wraps type signatures in.
     void showHover(int pos, const QString& markdown);
+    // Signature help, on the same call-tip surface as hover.
+    void showSignatureHelp(int pos, const QString& text);
+
+    // The text of the call tip currently on screen, or empty when none is.
+    //
+    // Scintilla has no getter for it -- callTipShow takes a string and keeps
+    // nothing readable -- so the last text shown is remembered here. That makes
+    // the tip assertable from the control API, which is the difference between
+    // "the manager had an answer" and "the editor showed it".
+    QString callTipText() const;
 
     // Show the document outline as a Scintilla user list: the completion
     // widget with a different list type and no insertion side effect, so it
@@ -309,6 +351,8 @@ signals:
     void completionRequested(int pos);
     // The mouse came to rest over `pos`.
     void hoverRequested(int pos);
+    // The cursor is inside a call and wants its parameter list.
+    void signatureHelpRequested(int pos);
     void hoverEnded();
     // The user asked where the symbol at `pos` is defined.
     void definitionRequested(int pos);
@@ -377,6 +421,7 @@ private:
     QTimer* occurrenceDebounce_ = nullptr;
     QVector<LspRange> occurrences_;
     QStringList chooserRows_;
+    QString callTipText_;
     QLineEdit* renameInput_ = nullptr;
     bool bracketGuides_ = true;
     BracketGuideOverlay* guideOverlay_ = nullptr;

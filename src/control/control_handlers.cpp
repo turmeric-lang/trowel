@@ -1,3 +1,4 @@
+#include "editor/dialect.h"
 #include "control/control_handlers.h"
 
 #include "control/control_connection.h"
@@ -738,6 +739,74 @@ void HandleLspReferences(MainWindow* w, const QJsonObject& args, const Reply& re
     ArmTimeout(ctx, w, timeout, reply);
 }
 
+void HandleLspWorkspaceSymbols(MainWindow* w, const QJsonObject& args,
+                               const Reply& reply) {
+    const int timeout = args.value("timeout_ms").toInt(8000);
+    const QString query = args.value("query").toString();
+
+    auto ctx = std::make_shared<WaitCtx>();
+    ctx->conn = QObject::connect(w, &MainWindow::workspaceSymbolsReady, w,
+        [ctx, reply](const QVector<LspSpan>& spans, const QString& reason) {
+            if (ctx->done) return;
+            ctx->done = true;
+            if (ctx->timer) ctx->timer->stop();
+            QObject::disconnect(ctx->conn);
+            QJsonArray arr;
+            for (const LspSpan& s : spans) {
+                arr.append(QJsonObject{
+                    {"uri", s.uri},
+                    {"path", LspManager::PathForUri(s.uri)},
+                    {"line", s.range.startLine},
+                    {"character", s.range.startCharacter},
+                });
+            }
+            QJsonObject o;
+            o["symbols"] = arr;
+            o["count"] = arr.size();
+            o["reason"] = reason;
+            reply(o, nullptr);
+        });
+    // The no-dialog half: a modal would hang the control socket.
+    w->findSymbolInProjectFor(query);
+    ArmTimeout(ctx, w, timeout, reply);
+}
+
+// Signature help.
+//
+// Goes to the manager directly rather than through EditorView's signal, the way
+// lsp.hover does, so the reply carries the server's answer. `tip_active` is
+// reported alongside it because the two are different claims -- the manager
+// having a signature and the editor showing a call tip -- and under offscreen
+// Qt the tip is a window that may never activate, so a test that asserted only
+// the tip would be asserting the platform.
+void HandleLspSignatureHelp(MainWindow* w, const QJsonObject& args, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    const int timeout = args.value("timeout_ms").toInt(8000);
+    const int pos = args.contains("pos") ? args.value("pos").toInt() : e->cursorPos();
+
+    auto ctx = std::make_shared<WaitCtx>();
+    LspManager::instance()->requestSignatureHelp(e, pos,
+        [ctx, reply, e, pos](const QString& text, int activeParameter) {
+            if (ctx->done) return;
+            ctx->done = true;
+            if (ctx->timer) ctx->timer->stop();
+            // Render it the way the editor would, so the reply describes what
+            // the user would see rather than only what arrived.
+            // At the position asked about, not at the caret: a caller that
+            // passed `pos` without moving the cursor would otherwise get a tip
+            // anchored somewhere else.
+            e->showSignatureHelp(pos, text);
+            reply(QJsonObject{
+                      {"text", text},
+                      {"active_parameter", activeParameter},
+                      {"tip_active", !e->callTipText().isEmpty()},
+                  },
+                  nullptr);
+        });
+    ArmTimeout(ctx, w, timeout, reply);
+}
+
 void HandleLspPrepareRename(MainWindow* w, const QJsonObject& args, const Reply& reply) {
     EditorView* e = RequireEditor(w, reply);
     if (!e) return;
@@ -1079,6 +1148,122 @@ void HandleReplIsRunning(MainWindow* w, const QJsonObject&, const Reply& reply) 
     QJsonObject o;
     o["running"] = r && r->isRunning();
     reply(o, nullptr);
+}
+
+// --- dialects -------------------------------------------------------------
+//
+// Three reads over one table, so the smoke tests can assert the dialect axis
+// without inferring it from style ids: what the ten bases are, what dialect the
+// active buffer is in, and what dialect the live REPL session is in. The last
+// is the one that cannot be derived from anything else -- it is session state.
+
+void HandleLangBases(MainWindow*, const QJsonObject&, const Reply& reply) {
+    QJsonArray bases;
+    for (int i = 0; i < static_cast<int>(Dialect::Count); ++i) {
+        const Dialect d = static_cast<Dialect>(i);
+        bases.append(QJsonObject{
+            {"base", QString::fromLatin1(DialectBaseToken(d))},
+            {"language", QString::fromLatin1(DialectLanguageName(d))},
+            {"reader", QString::fromLatin1(DialectReaderName(d))},
+            {"sweet", DialectIsSweet(d)},
+            {"formattable", DialectIsFormattable(d)},
+        });
+    }
+    reply(QJsonObject{{"bases", bases}}, nullptr);
+}
+
+void HandleLangGet(MainWindow* w, const QJsonObject&, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    const Dialect d = e->dialect();
+    QJsonObject o{
+        {"base", QString::fromLatin1(DialectBaseToken(d))},
+        {"language", QString::fromLatin1(DialectLanguageName(d))},
+        {"reader", QString::fromLatin1(DialectReaderName(d))},
+    };
+    ReplSession* r = w->replSession();
+    if (r) {
+        o["session_base"] = QString::fromLatin1(DialectBaseToken(r->dialect()));
+        o["session_dirtied"] = r->dirtiedSinceReset();
+        o["needs_switch"] = DialectNeedsSessionSwitch(r->dialect(), d);
+    }
+    reply(o, nullptr);
+}
+
+// Write the active buffer's `#lang` line, which is what the picker does.
+// Deliberately NOT a UI-state setter: the reply reports whether the text
+// changed, and `lang.get` reads the answer back off the buffer.
+void HandleLangSet(MainWindow* w, const QJsonObject& args, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    const QByteArray base = args.value("base").toString().toUtf8();
+    Dialect d = Dialect::Turmeric;
+    if (!DialectFromBaseToken(base, d)) {
+        ReplyErr(reply, "bad_base",
+                 QString("not a `#lang` base: '%1'").arg(QString::fromUtf8(base)));
+        return;
+    }
+    const bool changed = e->setLangDirective(d);
+    reply(QJsonObject{{"changed", changed},
+                      {"base", QString::fromLatin1(DialectBaseToken(e->dialect()))}},
+          nullptr);
+}
+
+// The rows the Dialect menu would show for the active buffer: the headings, the
+// offered readers, and which one is checked. Mirrors rebuildDialectMenu rather
+// than reading QMenu back, because a QAction's text is display chrome and
+// asserting on it would pin the wording rather than the behaviour.
+void HandleLangMenu(MainWindow* w, const QJsonObject&, const Reply& reply) {
+    EditorView* e = w ? w->editorView() : nullptr;
+    const Dialect current = e ? e->dialect() : Dialect::Turmeric;
+
+    const QVector<Dialect> offered{
+        Dialect::Turmeric, Dialect::TurmericSweet,
+        Dialect::Saffron,  Dialect::SaffronSweet,
+        Dialect::R7rs,     Dialect::R7rsSweet,
+    };
+
+    QJsonArray rows;
+    DialectLanguage heading = DialectLanguage::Turmeric;
+    bool first = true;
+    for (const Dialect d : offered) {
+        if (first || LanguageOf(d) != heading) {
+            heading = LanguageOf(d);
+            first = false;
+            rows.append(QJsonObject{
+                {"heading", QString::fromLatin1(DialectLanguageName(d))}});
+        }
+        rows.append(QJsonObject{
+            {"base", QString::fromLatin1(DialectBaseToken(d))},
+            {"reader", QString::fromLatin1(DialectReaderName(d))},
+            {"checked", d == current},
+        });
+    }
+    if (!offered.contains(current)) {
+        rows.append(QJsonObject{
+            {"base", QString::fromLatin1(DialectBaseToken(current))},
+            {"reader", QString::fromLatin1(DialectReaderName(current))},
+            {"checked", true},
+        });
+    }
+    reply(QJsonObject{{"rows", rows}}, nullptr);
+}
+
+void HandleLangSetSession(MainWindow* w, const QJsonObject& args, const Reply& reply) {
+    ReplSession* r = w->replSession();
+    if (!r) { ReplyErr(reply, "no_repl", "no REPL session"); return; }
+    const QByteArray base = args.value("base").toString().toUtf8();
+    Dialect d = Dialect::Turmeric;
+    if (!DialectFromBaseToken(base, d)) {
+        ReplyErr(reply, "bad_base",
+                 QString("not a `#lang` base: '%1'").arg(QString::fromUtf8(base)));
+        return;
+    }
+    if (!r->switchDialect(d)) {
+        ReplyErr(reply, "no_repl", "REPL is not running");
+        return;
+    }
+    reply(Ok(), nullptr);
 }
 
 void HandleRunBuffer(MainWindow* w, const QJsonObject&, const Reply& reply) {
@@ -1554,6 +1739,8 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "lsp.symbols")          { HandleLspSymbols(w, args, reply); return; }
     if (cmd == "lsp.highlights")       { HandleLspHighlights(w, args, reply); return; }
     if (cmd == "lsp.references")       { HandleLspReferences(w, args, reply); return; }
+    if (cmd == "lsp.workspace_symbols") { HandleLspWorkspaceSymbols(w, args, reply); return; }
+    if (cmd == "lsp.signature_help")   { HandleLspSignatureHelp(w, args, reply); return; }
     if (cmd == "lsp.prepare_rename")   { HandleLspPrepareRename(w, args, reply); return; }
     if (cmd == "lsp.rename")           { HandleLspRename(w, args, reply); return; }
     if (cmd == "lsp.restart")          { HandleLspRestart(w, args, reply); return; }
@@ -1571,6 +1758,11 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "repl.get_cwd")         { HandleReplGetCwd(w, args, reply); return; }
     if (cmd == "repl.set_cwd")         { HandleReplSetCwd(w, args, reply); return; }
     if (cmd == "repl.is_running")      { HandleReplIsRunning(w, args, reply); return; }
+    if (cmd == "lang.bases")           { HandleLangBases(w, args, reply); return; }
+    if (cmd == "lang.get")             { HandleLangGet(w, args, reply); return; }
+    if (cmd == "lang.set")             { HandleLangSet(w, args, reply); return; }
+    if (cmd == "lang.menu")            { HandleLangMenu(w, args, reply); return; }
+    if (cmd == "lang.set_session")     { HandleLangSetSession(w, args, reply); return; }
     if (cmd == "run.buffer")           { HandleRunBuffer(w, args, reply); return; }
     if (cmd == "run.selection")        { HandleRunSelection(w, args, reply); return; }
 

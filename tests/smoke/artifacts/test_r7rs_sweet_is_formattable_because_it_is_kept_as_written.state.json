@@ -1,0 +1,35 @@
+{
+  "geometry": {
+    "file_path": "/private/var/folders/sx/vdgl69xj1rs90sx051ts1ylh0000gn/T/pytest-of-rjungemann/pytest-12/test_r7rs_sweet_is_formattable0/sweetscheme.tur",
+    "h": 800,
+    "splitter": [
+      675,
+      482
+    ],
+    "title": "sweetscheme.tur \u2022 \u2014 Trowel",
+    "w": 1200,
+    "x": 2,
+    "y": 2
+  },
+  "editor": {
+    "modified": true,
+    "path": "/private/var/folders/sx/vdgl69xj1rs90sx051ts1ylh0000gn/T/pytest-of-rjungemann/pytest-12/test_r7rs_sweet_is_formattable0/sweetscheme.tur",
+    "text": "#lang r7rs/sweet\ndefine (f x)\n  * x 2\n"
+  },
+  "cursor": {
+    "anchor": 0,
+    "col": 0,
+    "line": 0,
+    "pos": 0,
+    "selection": [
+      0,
+      0
+    ]
+  },
+  "repl_running": {
+    "running": true
+  },
+  "screen": {
+    "text": "[trowel] tur repl started in ~\n\u2597            \u2598  \n\u259c\u2598\u258c\u258c\u259b\u2598\u259b\u259b\u258c\u2588\u258c\u259b\u2598\u258c\u259b\u2598\n\u2590\u2596\u2599\u258c\u258c \u258c\u258c\u258c\u2599\u2596\u258c \u258c\u2599\u2596\n\nTurmeric v0.60.1  (type :help for help, :quit to exit)\nturmeric> "
+  }
+}

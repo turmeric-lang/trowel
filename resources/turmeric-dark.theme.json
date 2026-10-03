@@ -64,6 +64,8 @@
         "identifier":     { "fg": "#EAE0D2" },
         "invalid":        { "fg": "#D9735A", "bold": true },
         "sweetMarker":    { "fg": "#C4A0E8", "bold": true },
+        "schemeVector":   { "fg": "#C4A0E8", "bold": true },
+        "barSymbol":      { "fg": "#D8DEE9", "italic": true },
         "rainbow0":       { "fg": "#EFA030" },
         "rainbow1":       { "fg": "#D7C94A" },
         "rainbow2":       { "fg": "#A8C98A" },

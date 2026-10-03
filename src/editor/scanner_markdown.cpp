@@ -73,11 +73,29 @@ bool GuestForInfo(const char* text, Sci_Position begin, Sci_Position end,
             std::tolower(static_cast<unsigned char>(text[k]))));
     }
 
-    if (tag == "sweet" || tag == "turmeric-sweet" || tag == "tur-sweet") {
+    // `sweet-exp` first, and it is the one that matters: it is the tag
+    // Turmeric's own guides use for every sweet-expression example -- 996 of
+    // them against zero for the three spellings this list used to hold -- so
+    // until it was added here, every sweet example in the shipped documentation
+    // rendered as undifferentiated code in Trowel's Markdown view.
+    if (tag == "sweet-exp" || tag == "sweet" || tag == "turmeric-sweet"
+        || tag == "tur-sweet" || tag == "saffron-sweet") {
         guest = Language::TurmericSweet;
         return true;
     }
-    if (tag == "turmeric" || tag == "tur" || tag == "lisp" || tag == "scheme") {
+    // `scheme` used to land on the Turmeric scanner, which is the wrong lexeme
+    // set; the guides use it 16 times. `r7rs/sweet` has no conventional tag, so
+    // it is spelled out both ways people would reach for.
+    if (tag == "scheme" || tag == "r7rs" || tag == "scm") {
+        guest = Language::R7rs;
+        return true;
+    }
+    if (tag == "r7rs-sweet" || tag == "scheme-sweet") {
+        guest = Language::R7rsSweet;
+        return true;
+    }
+    // Saffron is Turmeric to a scanner; see editor/dialect.h.
+    if (tag == "turmeric" || tag == "tur" || tag == "lisp" || tag == "saffron") {
         guest = Language::Turmeric;
         return true;
     }

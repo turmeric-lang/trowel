@@ -1,5 +1,7 @@
 #include "editor/scanner.h"
 
+#include "editor/dialect.h"
+
 #include <ILexer.h>
 #include <Scintilla.h>
 
@@ -75,7 +77,28 @@ constexpr int kMdInFenceBit = 1 << 23;
 constexpr int kMdFenceTildeBit = 1 << 24;
 constexpr int kMdFenceExtraShift = 25;  // 2 bits
 constexpr int kMdGuestShift = 27;       // 4 bits
-constexpr int kMdGuestPlain = 0xF;
+constexpr int kMdGuestMask = 0xF;
+constexpr int kMdGuestPlain = kMdGuestMask;
+
+// The field is four bits wide and 15 is the sentinel, so a guest id must fit in
+// 0..14. PackLexState used to mask with 0x7 while UnpackLexState read 0xF, so a
+// guest id above 7 did not survive a round trip: Sh (8) came back as Turmeric
+// and Python (9) as C.
+//
+// LATENT, as far as could be demonstrated: the packed state is only READ as a
+// seed when Lex() is asked to start at a line other than the first
+// (`GetLineState(startLine - 1)` below), and every path that was tried --
+// including an edit in the middle of a 40-line fence -- had Scintilla colourise
+// from position 0 instead, where the seed is a default-constructed LexState. So
+// this is corrected because pack and unpack must agree and because the next
+// language appended would have inherited the truncation, NOT because a
+// reproducer was found. If one turns up, it belongs in
+// tests/smoke/test_lexer_languages.py beside the multi-line fence test.
+//
+// The static_assert is the part that actually protects the invariant.
+static_assert(static_cast<int>(Language::LanguageCount) <= kMdGuestPlain,
+              "Language no longer fits the Markdown guest field; widen the "
+              "field (and move the sentinel) before appending another");
 
 int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -102,7 +125,8 @@ int PackLexState(const LexState& st) {
     if (st.mdInFence) v |= kMdInFenceBit;
     if (st.mdFenceTilde) v |= kMdFenceTildeBit;
     v |= Clamp(st.mdFenceExtra, 0, kMaxMdFenceExtra) << kMdFenceExtraShift;
-    const int guest = st.mdGuestPlain ? kMdGuestPlain : (static_cast<int>(st.mdGuest) & 0x7);
+    const int guest = st.mdGuestPlain ? kMdGuestPlain
+                                     : (static_cast<int>(st.mdGuest) & kMdGuestMask);
     v |= guest << kMdGuestShift;
     return v;
 }
@@ -128,7 +152,7 @@ LexState UnpackLexState(int p) {
     st.mdInFence = (p & kMdInFenceBit) != 0;
     st.mdFenceTilde = (p & kMdFenceTildeBit) != 0;
     st.mdFenceExtra = (p >> kMdFenceExtraShift) & 0x3;
-    const int guest = (p >> kMdGuestShift) & 0xF;
+    const int guest = (p >> kMdGuestShift) & kMdGuestMask;
     st.mdGuestPlain = (guest == kMdGuestPlain);
     st.mdGuest = st.mdGuestPlain ? Language::Turmeric : static_cast<Language>(guest);
     return st;
@@ -165,6 +189,9 @@ void ScanLine(Language lang, const ScanInput& in, LexState& st, Emitter& out) {
     case Language::Sh:       ScanShLine(in, st, out); break;
     case Language::Python:   ScanPythonLine(in, st, out); break;
     case Language::TurmericSweet: ScanTurmericSweetLine(in, st, out); break;
+    case Language::R7rs:      ScanR7rsLine(in, st, out); break;
+    case Language::R7rsSweet: ScanR7rsSweetLine(in, st, out); break;
+    case Language::LanguageCount:  // not a language; fall through to the default
     case Language::Turmeric: ScanTurmericLine(in, st, out); break;
     }
 }
@@ -180,6 +207,9 @@ int DefaultStyleFor(Language lang) {
     case Language::Sh:       return static_cast<int>(ShStyle::Default);
     case Language::Python:   return static_cast<int>(PyStyle::Default);
     case Language::TurmericSweet:
+    case Language::R7rs:
+    case Language::R7rsSweet:
+    case Language::LanguageCount:
     case Language::Turmeric: break;
     }
     return static_cast<int>(TurStyle::Default);
@@ -234,15 +264,17 @@ bool LanguageForFileName(const QString& path, Language& out) {
         return true;
     }
 
-    // Mirrors reader_type_from_extension() in Turmeric's reader.c, which
-    // recognizes exactly one suffix: `.tur.sweet`. A bare `.sweet` is read as
-    // ordinary Turmeric there, so treating it as sweet here would make
-    // highlighting disagree with what actually runs. Such a file gets the
-    // sweet reader only by carrying a `#lang` line, same as the toolchain.
-    if (lower.endsWith(".tur.sweet")) { out = Language::TurmericSweet; return true; }
-    if (lower.endsWith(".tur") || lower.endsWith(".sweet")) {
-        out = Language::Turmeric;
-        return true;
+    // The Turmeric family -- `.tur`, `.tur.sweet`, `.scm`, `.sweet` -- is
+    // DialectForFileName's table, mirroring reader_type_from_extension() in
+    // Turmeric's reader.c. Asking it rather than re-listing the suffixes here
+    // keeps the highlighting axis derived from the dialect axis instead of
+    // drifting from it.
+    {
+        Dialect d = Dialect::Turmeric;
+        if (DialectForFileName(path, d)) {
+            out = HighlightLanguageFor(d);
+            return true;
+        }
     }
     if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
         out = Language::Markdown;
@@ -268,59 +300,18 @@ Language LanguageForPath(const QString& path) {
 
 namespace {
 
-// Map a `#lang` base name to the scanner that should highlight the file.
+// Read a `#lang` directive off the head of `text` and report the scanner that
+// should paint the file.
 //
-// Turmeric has four reader types; Trowel has two scanners for them. The
-// curly-infix and neoteric readers only *enable* syntax that the Turmeric
-// scanner already paints unconditionally (`{a + b}` as CurlyInfix, `f(` as
-// NeotericCall), so they share it. Only the sweet reader adds tokens of its
-// own. Names and the legacy alias track lang_base_from_name() in reader.c.
-bool LanguageForLangBase(const QByteArray& base, Language& out) {
-    if (base == "turmeric" || base == "turmeric/curly-infix"
-        || base == "turmeric/neoteric") {
-        out = Language::Turmeric;
-        return true;
-    }
-    // `turmeric/sweet` is canonical; `sweet-exp` is the legacy alias, still
-    // accepted by the toolchain and still dominant across its own docs.
-    if (base == "turmeric/sweet" || base == "sweet-exp") {
-        out = Language::TurmericSweet;
-        return true;
-    }
-    return false;
-}
-
-// Read a `#lang` directive off the head of `text`, mirroring the accept rules
-// of detect_lang_layered() in reader.c: an optional `#!` shebang line, then
-// leading spaces/tabs (never newlines — the directive must be on line 1),
-// then `#lang`, whitespace, and the base name. Trailing layer tokens
-// (`stringed`, `refined`) do not affect the reader, so they are ignored.
+// Both halves live in editor/dialect.cpp now: the ten-row base table, and the
+// mapping from a base to a scanner. This file used to carry its own four-row
+// copy of the table, which is why `#lang saffron/sweet`, `#lang r7rs` and
+// `#lang r7rs/sweet` all fell through to plain, unsweet Turmeric.
 bool LangDirectiveIn(const QByteArray& text, Language& out) {
-    int i = 0;
-    const int n = text.size();
-
-    if (n >= 2 && text[0] == '#' && text[1] == '!'
-        && (n < 3 || text[2] == '/' || text[2] == ' ' || text[2] == '\t'
-            || text[2] == '\n' || text[2] == '\r')) {
-        const int nl = text.indexOf('\n');
-        if (nl < 0) return false;  // shebang-only file
-        i = nl + 1;
-    }
-
-    while (i < n && (text[i] == ' ' || text[i] == '\t')) ++i;
-    if (text.mid(i, 5) != "#lang") return false;
-    i += 5;
-
-    const int wsStart = i;
-    while (i < n && (text[i] == ' ' || text[i] == '\t')) ++i;
-    if (i == wsStart) return false;  // `#langfoo` is not a directive
-
-    const int baseStart = i;
-    while (i < n && text[i] != ' ' && text[i] != '\t'
-           && text[i] != '\n' && text[i] != '\r') {
-        ++i;
-    }
-    return LanguageForLangBase(text.mid(baseStart, i - baseStart), out);
+    Dialect d = Dialect::Turmeric;
+    if (!DialectFromDirective(text, d)) return false;
+    out = HighlightLanguageFor(d);
+    return true;
 }
 
 // Language named by a `#!` interpreter line, for files whose name says
@@ -375,29 +366,6 @@ bool ShebangLanguage(const QByteArray& text, Language& out) {
         return true;
     }
     return false;
-}
-
-// Offsets of the `#lang` line within `text`, or false if there isn't one.
-bool LangDirectiveSpan(const QByteArray& text, int& start, int& end) {
-    int i = 0;
-    const int n = text.size();
-
-    if (n >= 2 && text[0] == '#' && text[1] == '!'
-        && (n < 3 || text[2] == '/' || text[2] == ' ' || text[2] == '\t'
-            || text[2] == '\n' || text[2] == '\r')) {
-        const int nl = text.indexOf('\n');
-        if (nl < 0) return false;
-        i = nl + 1;
-    }
-
-    int j = i;
-    while (j < n && (text[j] == ' ' || text[j] == '\t')) ++j;
-    if (text.mid(j, 5) != "#lang") return false;
-
-    start = i;
-    const int nl = text.indexOf('\n', j);
-    end = (nl < 0) ? n : nl + 1;
-    return true;
 }
 
 }
@@ -489,6 +457,9 @@ public:
         case Language::Sh:       return "sh";
         case Language::Python:   return "python";
         case Language::TurmericSweet: return "turmeric-sweet";
+        case Language::R7rs:      return "r7rs";
+        case Language::R7rsSweet: return "r7rs-sweet";
+        case Language::LanguageCount:
         case Language::Turmeric: break;
         }
         return "turmeric";

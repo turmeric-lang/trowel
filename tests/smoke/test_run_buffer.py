@@ -23,30 +23,58 @@ def test_run_buffer_untitled_gets_scratched(trowel):
     assert "99" in hit["matched"]
 
 
-def test_run_sweet_buffer(trowel, fixture_files: Path):
-    # A clean, saved .tur.sweet file loads in place; `tur` picks the
+def test_run_sweet_buffer_runs_main(trowel, fixture_files: Path):
+    # A clean, saved .tur.sweet file runs in place; `tur` picks the
     # sweet-expression reader off the extension.
+    #
+    # Asserted on the program's OUTPUT, not on a definition being readable
+    # afterwards. That is the contract Run Buffer has: `:run` evaluates the file
+    # and then invokes `main`. These two tests used to assert the definition
+    # instead, which passed only because Run Buffer sent `(load ...)` for sweet
+    # buffers -- a workaround for an upstream defect -- and `load` defines
+    # without running. The weaker assertion could not tell a program that ran
+    # from one that was merely defined, which is the bug that shipped.
     trowel.wait_output("turmeric>", timeout_ms=5000)
-    trowel.call("editor.open", {"path": str(fixture_files / "sweet_hello.tur.sweet")})
+    trowel.call("editor.open", {"path": str(fixture_files / "sweet_main.tur.sweet")})
     trowel.call("run.buffer")
-    trowel.wait_idle(quiet_ms=400, timeout_ms=5000)
-    trowel.send("sweet-x")
-    hit = trowel.wait_output("=> 7", timeout_ms=3000)
-    assert "7" in hit["matched"]
+    hit = trowel.wait_output("sweet main ran", timeout_ms=8000)
+    assert "sweet main ran" in hit["matched"]
 
 
 def test_run_dirty_sweet_buffer_keeps_sweet_extension(trowel, fixture_files: Path):
     # The dirty path writes a scratch file instead, which only parses as sweet
-    # if it inherits the .tur.sweet suffix — the extension is the only signal,
-    # since a `#lang sweet-exp` header is a parse error.
+    # if it inherits the .tur.sweet suffix — the extension is the only signal
+    # a scratch file has, since it carries no `#lang` line of its own unless the
+    # buffer had one.
     trowel.wait_output("turmeric>", timeout_ms=5000)
-    trowel.call("editor.open", {"path": str(fixture_files / "sweet_hello.tur.sweet")})
-    trowel.call("editor.set_text", {"text": "def sweet-dirty 21\n"})
+    trowel.call("editor.open", {"path": str(fixture_files / "sweet_main.tur.sweet")})
+    trowel.call("editor.set_text",
+                {"text": 'defn main []\n  println("sweet dirty ran")\n  0\n'})
     trowel.call("run.buffer")
+    hit = trowel.wait_output("sweet dirty ran", timeout_ms=8000)
+    assert "sweet dirty ran" in hit["matched"]
+
+
+def test_run_sweet_buffer_does_not_leave_its_definitions_behind(
+        trowel, fixture_files: Path):
+    """Upstream gap, pinned so a fix is noticed: `:run` on a file whose reader
+    came from its EXTENSION invokes `main` but does not leave the file's
+    top-level definitions in the session, where the same `:run` on a `.tur`
+    file does (test_run_buffer_loads_definitions covers that side).
+
+    Measured against the bundled v0.60.1. Reported upstream as
+    `run-on-sweet-file-drops-its-definitions`. When this test starts failing,
+    upstream has fixed it -- delete the test, not the assertion.
+    """
+    trowel.wait_output("turmeric>", timeout_ms=5000)
+    trowel.call("editor.open", {"path": str(fixture_files / "sweet_main.tur.sweet")})
+    trowel.call("run.buffer")
+    trowel.wait_output("sweet main ran", timeout_ms=8000)
     trowel.wait_idle(quiet_ms=400, timeout_ms=5000)
-    trowel.send("sweet-dirty")
-    hit = trowel.wait_output("=> 21", timeout_ms=3000)
-    assert "21" in hit["matched"]
+    trowel.send("sweet-main-x")
+    trowel.wait_idle(quiet_ms=400, timeout_ms=5000)
+    screen = trowel.call("repl.get_screen", {"lines": 40})["text"]
+    assert "=> 7" not in screen, screen
 
 
 def test_run_selection_keeps_the_lang_directive(trowel, tmp_path: Path):

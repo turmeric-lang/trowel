@@ -58,6 +58,7 @@ add_library(trowel_lib STATIC
     src/editor/scanner_python.cpp
     src/editor/scanner_sh.cpp
     src/editor/scanner_toml.cpp
+    src/editor/dialect.cpp
     src/editor/scanner_turmeric.cpp
     src/editor/theme_loader.cpp
     src/editor/theme_loader.h
@@ -158,7 +159,7 @@ endif()
 # source of truth: the per-arch SHA-256s below are pinned to this exact tag, so
 # the version must not be independently overridable via -D (which would leave a
 # stale cached value pointing at mismatched hashes).
-set(TROWEL_TURMERIC_VERSION "v0.46.0")
+set(TROWEL_TURMERIC_VERSION "v0.60.1")
 
 # Select the release asset + its SHA-256 for this platform/arch. Hashes are from
 # the release's sha256sums.txt.
@@ -166,33 +167,33 @@ set(TROWEL_TURMERIC_VERSION "v0.46.0")
 # `_turmeric_ext` exists because the Windows asset is a .zip where the others
 # are .tar.gz. The archive LAYOUT no longer needs a per-platform branch here:
 # Windows has always shipped the PREFIX layout (bin/ include/ lib/ share/) and
-# the .tar.gz targets were flat through v0.46.0 before being unified onto it,
-# so bundledTurPath() (src/repl/repl_session.cpp) accepts either and this
-# staging copies whichever one the pin fetches. Bumping
-# TROWEL_TURMERIC_VERSION across the unification therefore needs no change on
-# this side. See the turmeric-side report `unify-release-archive-layout`.
+# the .tar.gz targets were flat through v0.46.0 before being unified onto it.
+# The pin is past the unification now, so every target ships the prefix layout
+# and that is the branch bundledTurPath() (src/repl/repl_session.cpp) takes --
+# but it still accepts either, which is what lets this pin move backwards as
+# well as forwards. See the turmeric-side report `unify-release-archive-layout`.
 set(_turmeric_key "")
 set(_turmeric_ext "tar.gz")
 if(APPLE)
     if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64" OR
        CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
         set(_turmeric_key "macos-arm64")
-        set(_turmeric_sha "d266fa2dac234e0d51dcfa352c08c6c62a4f4350afb082a21ef8911b87909861")
+        set(_turmeric_sha "b40202d6e144f55d004c63d183524bcd61455037223c4aff096d93593baafa9a")
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
         set(_turmeric_key "linux-x86_64")
-        set(_turmeric_sha "ad76b073385735709bffca45da3dc6bd6f5e30daeea1eff94cc3b2c0841929d0")
+        set(_turmeric_sha "f373234b64abab6f05e499d6ff85ad1a98d3bbab7f51b7963e1725a3ae5ffd67")
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         set(_turmeric_key "linux-aarch64")
-        set(_turmeric_sha "947be43fa83cf237b5f3afe0e507e4a01b8646a8ec19f8281cf7927046e6d77e")
+        set(_turmeric_sha "b476fa9411ae751b58d4239442c5a1418b99636455ba48a866297d360d271cd8")
     endif()
 elseif(WIN32)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^([Aa][Mm][Dd]64|x86_64|X86)$" OR
        CMAKE_SIZEOF_VOID_P EQUAL 8)
         set(_turmeric_key "windows-x86_64")
         set(_turmeric_ext "zip")
-        set(_turmeric_sha "99f0c3f17796580fafee12d6c151e636f5273fe87c40ac04d82d771066689159")
+        set(_turmeric_sha "5ca23d6250aabaadccd70ec22bf64e024ba38a087ab968032c252cf46816229f")
     endif()
 endif()
 
@@ -216,7 +217,7 @@ target_include_directories(trowel PRIVATE "${CMAKE_BINARY_DIR}/generated")
 if(_turmeric_key)
     include(FetchContent)
     FetchContent_Declare(turmeric_prebuilt
-        URL      "https://github.com/rjungemann/turmeric/releases/download/${TROWEL_TURMERIC_VERSION}/turmeric-${TROWEL_TURMERIC_VERSION}-${_turmeric_key}.${_turmeric_ext}"
+        URL      "https://github.com/turmeric-lang/turmeric/releases/download/${TROWEL_TURMERIC_VERSION}/turmeric-${TROWEL_TURMERIC_VERSION}-${_turmeric_key}.${_turmeric_ext}"
         URL_HASH SHA256=${_turmeric_sha}
     )
     FetchContent_MakeAvailable(turmeric_prebuilt)
@@ -230,7 +231,17 @@ if(_turmeric_key)
         set(_turmeric_stage_dir "$<TARGET_FILE_DIR:trowel>/turmeric")
     endif()
 
+    # REMOVE the stage directory before copying into it. `copy_directory` merges
+    # rather than replaces, so without this every file a PREVIOUS pin staged
+    # survives the bump. That is not theoretical: bumping v0.46.0 -> v0.60.1 on a
+    # tree that had once been pinned to v0.42.2 left a v0.42.2 `tur` and its
+    # stdlib at the archive root (the flat layout) beside the v0.60.1 one under
+    # `bin/` (the prefix layout), in the same bundle, both codesigned in.
+    # bundledTurPath() probes `bin/` first so the right one still ran, which is
+    # exactly why this went unnoticed -- the wrong binary was reachable, merely
+    # not reached.
     add_custom_command(TARGET trowel POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${_turmeric_stage_dir}"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${turmeric_prebuilt_SOURCE_DIR}" "${_turmeric_stage_dir}"
         COMMENT "Staging Turmeric ${TROWEL_TURMERIC_VERSION} (${_turmeric_key}) next to trowel"

@@ -1,5 +1,6 @@
 #include "repl/run_buffer.h"
 
+#include "editor/dialect.h"
 #include "editor/editor_view.h"
 #include "repl/repl_session.h"
 
@@ -20,12 +21,43 @@ QString scratchDir() {
     return dir;
 }
 
-// Scratch-file extension for the buffer's language. `.tur.sweet` is the only
-// suffix the toolchain maps to a non-default reader, and it is what makes a
-// dirty sweet buffer parse as sweet. The buffer's own `#lang` line, when it
-// has one, travels with the contents and covers everything the suffix cannot.
+// Scratch-file extension for the buffer's dialect -- `.tur.sweet` for the sweet
+// Turmeric and Saffron readers, `.scm` for `r7rs`, `.tur` otherwise. Those are
+// the only two suffixes the toolchain maps to a non-default reader. The
+// buffer's own `#lang` line, when it has one, travels with the contents and
+// covers everything no suffix can express (`r7rs/sweet`, and the Saffron and
+// curly-infix/neoteric bases).
 QString extensionFor(const EditorView* editor) {
-    return editor->language() == Language::TurmericSweet ? ".tur.sweet" : ".tur";
+    return QString::fromLatin1(DialectScratchExtension(editor->dialect()));
+}
+
+// Put the session in the buffer's language before running it, and say so.
+//
+// The READER travels with the file, so a sweet or curly-infix buffer needs
+// nothing. The LANGUAGE does not: it selects a prelude the session either has
+// or has not loaded, and a Scheme buffer run against a Turmeric session fails
+// on `r7rs-display` no matter how the file is spelled. See
+// DialectNeedsSessionSwitch for the measurements.
+//
+// The switch RESETS the session. That is upstream's behaviour and not something
+// Trowel can soften, so the cost is reported rather than hidden -- and reported
+// differently depending on whether it actually cost anything, which is what
+// `dirtiedSinceReset` is for. No confirmation prompt: one on every
+// cross-language run would be intolerable, and the thing being discarded is a
+// REPL environment the user can rebuild by re-running.
+//
+// Not waited on. The REPL consumes its input line by line in order, so the
+// `#lang` line and the command behind it arrive in the right sequence.
+QString switchSessionIfNeeded(ReplSession* repl, Dialect buffer) {
+    const Dialect session = repl->dialect();
+    if (!DialectNeedsSessionSwitch(session, buffer)) return {};
+
+    const bool losing = repl->dirtiedSinceReset();
+    if (!repl->switchDialect(buffer)) return {};
+    return losing
+        ? QString(" (session switched to %1; its definitions were discarded)")
+              .arg(DialectBaseToken(buffer))
+        : QString(" (session switched to %1)").arg(DialectBaseToken(buffer));
 }
 
 // Escape a filesystem path for embedding in a turmeric string literal.
@@ -37,29 +69,6 @@ QString escapeForTurmericString(const QString& path) {
         out.append(c);
     }
     return out;
-}
-
-// Whether `:run` is safe for a file with this extension.
-//
-// `:run` is the right command and is used wherever it works. It is broken
-// upstream for any extension that selects a non-default reader — `.tur.sweet`
-// and `.sweet`. Measured against the bundled v0.42.2: `:run` on a `.tur.sweet`
-// file prints `;; run:` then `;; ready` and defines nothing at all, silently.
-//
-// The cause is visible in the toolchain source. cmd_run (repl.c) builds a
-// fresh env and calls repl_preload_stdlib_and_natives on it, then
-// turi_eval_file (eval.c) sees a non-default reader in the extension and calls
-// turi_env_reset_to_prelude — throwing away the preload nobody re-runs. The
-// file then fails to elaborate, and cmd_run drops "elaboration error" on the
-// floor rather than printing it. repl.c's own comment above
-// repl_preload_stdlib_and_natives names this exact hazard.
-//
-// The condition is purely extension-driven upstream, so testing the extension
-// here matches it exactly: a `.tur` carrying a `#lang` *layer* still takes the
-// default reader and is still fine.
-bool runCommandIsSafeFor(const QString& path) {
-    const QString lower = QFileInfo(path).fileName().toLower();
-    return !lower.endsWith(".tur.sweet") && !lower.endsWith(".sweet");
 }
 
 // Run a whole program: `:run <path>`, the REPL's own entry point for "execute
@@ -128,23 +137,31 @@ RunResult writeScratchAndLoad(ReplSession* repl,
     return r;
 }
 
-// Send whichever of the two a whole-buffer run should use for this path, and
-// describe what was done. `:reset` is sent only on the load fallback: `:run`
-// installs a fresh env itself, and a stray reset before it would be redundant.
+// Run a whole buffer: always `:run`, for every dialect.
+//
+// This used to branch, routing `.tur.sweet` and `.sweet` through `:reset` plus
+// `(load ...)` because `:run` on a file whose EXTENSION selected a non-default
+// reader threw away the preload it had just installed and then dropped the
+// elaboration error on the floor -- measured against the bundled v0.42.2, which
+// defined nothing at all and said nothing about it.
+//
+// That is fixed upstream, and the workaround had become the bug it was working
+// around: `load` evaluates the top-level forms and stops, so a sweet program
+// shaped like a program -- a `defn main` and little else -- was DEFINED and
+// never run, which is the defect `6a7d17b` fixed for `.tur` and left standing
+// for sweet. Re-measured against the pinned v0.60.1, `:run` on a headerless
+// `.tur.sweet` with a `defn main` prints and returns normally, while `load` on
+// the same file still answers `=> #<fn main>` and prints nothing.
+//
+// No `:reset` either: `:run` installs a fresh environment itself.
 RunResult sendWholeBuffer(ReplSession* repl, const QString& path) {
     RunResult r;
-    const bool canRun = runCommandIsSafeFor(path);
-    if (!canRun && !repl->sendCommand(QByteArray(":reset"))) {
-        r.message = "REPL is not running.";
-        return r;
-    }
-    if (!repl->sendCommand(canRun ? runCommandFor(path) : loadCommandFor(path))) {
+    if (!repl->sendCommand(runCommandFor(path))) {
         r.message = "REPL is not running.";
         return r;
     }
     r.ok = true;
-    r.message = QString(canRun ? "Ran %1" : "Loaded %1")
-                    .arg(QFileInfo(path).fileName());
+    r.message = QString("Ran %1").arg(QFileInfo(path).fileName());
     return r;
 }
 
@@ -167,12 +184,13 @@ bool isBuildManifestName(const QString& name) {
         || name.compare("build.tur.sweet", Qt::CaseInsensitive) == 0;
 }
 
-// Extensions that make a file Turmeric source. Mirrors LanguageForPath's
-// extension table minus its catch-all fallback.
+// Extensions that make a file Turmeric-family source -- `.tur`, `.tur.sweet`,
+// `.scm`, `.sweet`. Asked of the dialect table rather than re-listed, so adding
+// a dialect extension cannot enable highlighting while leaving Run Buffer
+// greyed out (which is what happened to `.scm`).
 bool hasTurmericExtension(const QString& name) {
-    const QString lower = name.toLower();
-    return lower.endsWith(".tur") || lower.endsWith(".tur.sweet")
-        || lower.endsWith(".sweet");
+    Dialect ignored = Dialect::Turmeric;
+    return DialectForFileName(name, ignored);
 }
 
 }
@@ -202,18 +220,21 @@ RunResult RunBuffer(EditorView* editor, ReplSession* repl) {
         return r;
     }
 
-    // A whole-buffer run gets a fresh env — `:run` installs one itself, and
-    // the load fallback sends `:reset` first. Selections go through RunRange
-    // instead and keep the current env.
+    // A whole-buffer run gets a fresh env — `:run` installs one itself.
+    // Selections go through RunRange instead and keep the current env.
+
+    const QString note = switchSessionIfNeeded(repl, editor->dialect());
 
     // If saved on disk and clean, run the file in place — so any error the
     // REPL reports names the user's own file rather than a scratch copy.
     if (!editor->filePath().isEmpty() && !editor->isModified()) {
-        return sendWholeBuffer(repl, editor->filePath());
+        r = sendWholeBuffer(repl, editor->filePath());
+    } else {
+        // Dirty or untitled — write to scratch first.
+        r = writeScratchAndRun(repl, editor->text(), extensionFor(editor));
     }
-
-    // Dirty or untitled — write to scratch first.
-    return writeScratchAndRun(repl, editor->text(), extensionFor(editor));
+    if (r.ok) r.message += note;
+    return r;
 }
 
 RunResult RunRange(EditorView* editor, ReplSession* repl, int startPos, int endPos) {
@@ -235,16 +256,30 @@ RunResult RunRange(EditorView* editor, ReplSession* repl, int startPos, int endP
         r.message = "Empty selection.";
         return r;
     }
+    const Dialect dialect = editor->dialect();
+
     // A selection from mid-buffer leaves the `#lang` line behind, which would
     // run the region under a different reader than the one it was written for.
-    // The extension carries the sweet base, but nothing else — not the layers,
-    // not the neoteric/curly-infix bases — so re-attach the line itself unless
-    // the selection already starts at the top of the file.
+    // A scratch file's EXTENSION can carry two bases (`.tur.sweet` and `.scm`)
+    // and no more, so for the other eight the line is the only carrier there
+    // is -- `r7rs/sweet` has no extension at all, and neither Saffron nor the
+    // curly-infix and neoteric readers have one.
     if (startPos > 0) {
-        const QByteArray directive = editor->langDirectiveLine();
+        QByteArray directive = editor->langDirectiveLine();
+        // Synthesize one when the buffer had none to copy. A `.scm` file is
+        // Scheme by extension with no header to find, and that is the
+        // idiomatic way to write one -- so a selection out of it would
+        // otherwise be read as Turmeric.
+        if (directive.isEmpty() && dialect != Dialect::Turmeric) {
+            directive = QByteArray("#lang ") + DialectBaseToken(dialect) + "\n";
+        }
         if (!directive.isEmpty()) contents.prepend(directive);
     }
-    return writeScratchAndLoad(repl, contents, extensionFor(editor));
+
+    const QString note = switchSessionIfNeeded(repl, dialect);
+    r = writeScratchAndLoad(repl, contents, extensionFor(editor));
+    if (r.ok) r.message += note;
+    return r;
 }
 
 }

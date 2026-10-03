@@ -206,6 +206,18 @@ EditorView::EditorView(QWidget* parent)
     connect(sci_, &ScintillaEditBase::charAdded, this, [this](int ch) {
         if (ch == '\n') autoIndentAfterNewline();
         if (ch == '(') emit completionRequested(cursorPos());
+        // Signature help is NOT auto-triggered, though the server advertises
+        // `(` as its trigger character. Measured against v0.60.1 on
+        // `(nav-double nav-total)`: the server answers `null` at the `(` and
+        // `null` immediately after the callee's name, and only returns a
+        // signature once the cursor is in ARGUMENT position (past the name and
+        // a space). So a request on `(` is a guaranteed miss, and the one
+        // position that would work is after a space -- which in a lisp is most
+        // keystrokes, each costing a didChange plus a compile on the server's
+        // single thread (the same cost that keeps completion off space).
+        //
+        // Hence: explicit only, via Run > Show Signature Help. Reported
+        // upstream as `signature-help-declines-at-its-own-trigger-character`.
     });
 
     connect(sci_, &ScintillaEditBase::dwellStart, this, [this](int x, int y) {
@@ -214,6 +226,7 @@ EditorView::EditorView(QWidget* parent)
     });
     connect(sci_, &ScintillaEditBase::dwellEnd, this, [this](int, int) {
         sci_->callTipCancel();
+        callTipText_.clear();
         emit hoverEnded();
     });
 
@@ -309,6 +322,14 @@ void EditorView::attachLanguageServer() {
         lsp->requestHover(this, pos, [this, pos](const QString& text) {
             showHover(pos, text);
         });
+    });
+    connect(this, &EditorView::signatureHelpRequested, lsp, [this, lsp](int pos) {
+        lsp->requestSignatureHelp(this, pos,
+            [this, pos](const QString& text, int /*activeParameter*/) {
+                // showSignatureHelp ignores empty text, which is what an
+                // "answered, but no signature here" reply carries.
+                showSignatureHelp(pos, text);
+            });
     });
     connect(this, &EditorView::definitionRequested, lsp, [this, lsp](int pos) {
         lsp->requestDefinition(this, pos, [this](const LspLocation& location) {
@@ -1302,7 +1323,26 @@ void EditorView::showHover(int pos, const QString& markdown) {
     while (!lines.isEmpty() && lines.last().trimmed().isEmpty()) lines.removeLast();
     if (lines.isEmpty()) return;
 
-    sci_->callTipShow(pos, lines.join('\n').toUtf8().constData());
+    callTipText_ = lines.join('\n');
+    sci_->callTipShow(pos, callTipText_.toUtf8().constData());
+}
+
+void EditorView::showSignatureHelp(int pos, const QString& text) {
+    // The same call-tip surface as hover, and deliberately so: one popup
+    // convention for "what is this thing", whether you asked by dwelling on a
+    // name or by opening a call.
+    //
+    // Cancelled first rather than shown over the top. A tip left from the
+    // enclosing call would otherwise sit there while a nested call is typed,
+    // describing the wrong callee -- and Scintilla keeps the first one.
+    if (text.trimmed().isEmpty()) return;
+    sci_->callTipCancel();
+    callTipText_ = text;
+    sci_->callTipShow(pos, callTipText_.toUtf8().constData());
+}
+
+QString EditorView::callTipText() const {
+    return (sci_ && sci_->callTipActive()) ? callTipText_ : QString();
 }
 
 void EditorView::setPath(const QString& path) {
@@ -1319,6 +1359,59 @@ void EditorView::refreshLanguage() {
     if (lang == language_) return;
     language_ = lang;
     installLexer();
+}
+
+Dialect EditorView::dialect() const {
+    // The same two-line probe `refreshLanguage` uses: a `#lang` line is on line
+    // 1, or line 2 behind a `#!` shebang, and nowhere else.
+    return DialectForBuffer(path_, languageProbeText());
+}
+
+bool EditorView::setLangDirective(Dialect d) {
+    const QByteArray text = this->text();
+    int start = 0;
+    int end = 0;
+    const bool had = LangDirectiveSpan(text, start, end);
+
+    if (!had && d == Dialect::Turmeric) return false;  // nothing to write
+
+    // A header is removed, not rewritten, when the selection returns to the
+    // default: `#lang turmeric` is what a file with no header already means,
+    // and leaving one behind would make the picker's "off" state visible in the
+    // source forever.
+    if (d == Dialect::Turmeric) {
+        int cut = end;
+        // Take the blank line an insert would have added back with it. Only one,
+        // and only when it is blank -- a file whose real second line happens to
+        // be empty keeps it.
+        if (cut < text.size() && text[cut] == '\n') {
+            cut += 1;
+        } else if (cut + 1 < text.size() && text[cut] == '\r' && text[cut + 1] == '\n') {
+            cut += 2;
+        }
+        beginEditGroup();
+        sci_->deleteRange(start, cut - start);
+        endEditGroup();
+        refreshLanguage();
+        return true;
+    }
+
+    const QByteArray line = QByteArray("#lang ") + DialectBaseToken(d) + "\n";
+
+    beginEditGroup();
+    if (had) {
+        // Replace exactly the directive line. Everything after it, blank line
+        // included, is left alone.
+        sci_->deleteRange(start, end - start);
+        sci_->insertText(start, line.constData());
+    } else {
+        // New header at the very top, followed by a blank line so the first
+        // real form is not glued to it.
+        sci_->insertText(0, (line + "\n").constData());
+    }
+    endEditGroup();
+    refreshLanguage();
+    return true;
 }
 
 QByteArray EditorView::langDirectiveLine() const {

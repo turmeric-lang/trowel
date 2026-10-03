@@ -1,0 +1,8 @@
+; A sweet-expression program shaped the way programs are shaped: a `defn main`
+; the runner has to invoke, plus a top-level def. Run Buffer must PRINT, which
+; is what `load` never did -- see sendWholeBuffer in src/repl/run_buffer.cpp.
+def sweet-main-x 7
+
+defn main []
+  println("sweet main ran")
+  0

@@ -176,9 +176,8 @@ RunResult TraceRunner::run(const QString& filePath) {
 
     // Same stdlib pinning as ReplSession::start and ProjectRunner::run — a
     // `tur` found on PATH must not be paired with an ambient TUR_STDLIB_DIR.
-    const QString siblingStdlib =
-        QFileInfo(binary).absolutePath() + QStringLiteral("/stdlib");
-    if (QDir(siblingStdlib).exists()) {
+    const QString siblingStdlib = TurStdlibDirFor(binary);
+    if (!siblingStdlib.isEmpty()) {
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
         env.insert("TUR_STDLIB_DIR", siblingStdlib);
         proc_->setProcessEnvironment(env);

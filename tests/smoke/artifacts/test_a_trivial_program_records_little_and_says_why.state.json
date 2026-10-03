@@ -1,0 +1,35 @@
+{
+  "geometry": {
+    "file_path": "/Users/rjungemann/Projects/trowel/tests/smoke/fixtures/trace_trivial.tur",
+    "h": 800,
+    "splitter": [
+      675,
+      482
+    ],
+    "title": "trace_trivial.tur \u2014 Trowel",
+    "w": 1200,
+    "x": 2,
+    "y": 2
+  },
+  "editor": {
+    "modified": false,
+    "path": "/Users/rjungemann/Projects/trowel/tests/smoke/fixtures/trace_trivial.tur",
+    "text": ";; A program that genuinely does almost nothing: `main` exists, runs, and\n;; evaluates three expressions. Distinct from trace_nomain.tur (no `main` at\n;; all) and from trace_broken.tur (never compiled), and the reason the\n;; short-recording outcome still means something under per-expression\n;; granularity.\n(defn main [] : int\n  (+ 1 2))\n"
+  },
+  "cursor": {
+    "anchor": 0,
+    "col": 0,
+    "line": 0,
+    "pos": 0,
+    "selection": [
+      0,
+      0
+    ]
+  },
+  "repl_running": {
+    "running": true
+  },
+  "screen": {
+    "text": "37 | (load \"/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib/typeclass-functor.tur\")\n38 | (load \"/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib/typeclass-clone.tur\")\n<eval>:62:7: error: load: cannot open '/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib/region.tur'\n59 | (load \"/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib/unique.tur\")\n60 | (load \"/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib/sym.tur\")\n61 | (load \"/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib/trail.tur\")\n62 | (load \"/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib/region.tur\")\n   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n<eval>:34:42: error [TUR-E0012]: kind mismatch (TUR-E0012): cannot apply a type of kind '*' as a type constructor; expected an arrow kind (* -> * or higher)\n31 | (defn none? [r :int] :bool false)\n32 | (defn doc-print [name :cstr] :nil nil)\n33 | \n34 | (defn vec-new-filled [A] [n :int v :A] : (Vec A) (:: (vec-new) (Vec A)))\n   |                                          ^^^^^^^\n<eval>:34:55: warning [TUR-W0040]: unknown name 'vec-new'; will runtime-dispatch -- typo?\n31 | (defn none? [r :int] :bool false)\n32 | (defn doc-print [name :cstr] :nil nil)\n33 | \n34 | (defn vec-new-filled [A] [n :int v :A] : (Vec A) (:: (vec-new) (Vec A)))\n   |                                                       ^^^^^^^\n/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib/schema.tur:538:61: warning [TUR-W0040]: unknown name 'vec-of'; will runtime-dispatch -- typo?\n535 | ;;;\n536 | ;;; Since: Phase SC7\n537 | \n538 | (defn schema/alt [a : int b : int] : int (schema/union (:: (vec-of a b) :int)))\n    |                                                             ^^^^^^\n539 | ;;; schema/ap-fat -- closure-aware Validation applicative (kind 16).\n540 | ;;;\n/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib/schema.tur:594:14: error: typeclass 'Functor' is not defined\n591 | (defstruct Schema [A] (raw :int))\n592 | ;;; Functor [Schema] -- map a function over a schema's decoded value.\n593 | \n594 | (definstance Functor [Schema]\n    |              ^^^^^^^\n595 |   (fmap [container fn]\n596 |     (:: (make-struct Schema (schema/fmap (.raw container) fn)) (Schema int))))\ntrace: 3 steps (per expression), 1 enters, 0 pops, 0 changes, peak depth 1, 198 bytes, 0 bytes of output, truncated no\ntrace: wrote /var/folders/sx/vdgl69xj1rs90sx051ts1ylh0000gn/T/trace_trivial.turtrace\n[trowel] This file does not compile, so nothing was recorded. Fix the errors above and trace again.\n"
+  }
+}

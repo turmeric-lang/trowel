@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- shared-mime-info definition for Turmeric source files. Mirrors the
-     CFBundleDocumentTypes entry in resources/Info.plist.in (.tur / .sweet). -->
+     CFBundleDocumentTypes entry in resources/Info.plist.in
+     (.tur / .sweet / .scm). -->
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="text/x-turmeric">
     <comment>Turmeric source code</comment>
@@ -8,5 +9,15 @@
     <glob pattern="*.tur"/>
     <glob pattern="*.sweet"/>
     <icon name="text-x-turmeric"/>
+  </mime-type>
+  <!-- `#lang r7rs`. `.scm` selects the Scheme LANGUAGE as well as its reader
+       upstream (reader_type_from_extension), so such a file is Turmeric-family
+       source Trowel can run, not merely something it can colour. The generic
+       `text/x-scheme` already exists on most systems; this adds the association
+       rather than a new type. -->
+  <mime-type type="text/x-scheme">
+    <comment>Scheme source code</comment>
+    <sub-class-of type="text/plain"/>
+    <glob pattern="*.scm"/>
   </mime-type>
 </mime-info>

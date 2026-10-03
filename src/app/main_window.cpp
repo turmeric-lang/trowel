@@ -30,6 +30,8 @@
 #include <QMimeData>
 #include <QUrl>
 #include <QFileDialog>
+#include <QInputDialog>
+#include <QActionGroup>
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
@@ -366,7 +368,7 @@ void MainWindow::setupMenus() {
 
     formatFileAction_ = new QAction("&Format File", this);
     formatFileAction_->setShortcut(QKeySequence("Ctrl+Shift+F"));
-    formatFileAction_->setToolTip("Format file with `tur format`");
+    formatFileAction_->setToolTip("Format file with `tur fmt`");
     connect(formatFileAction_, &QAction::triggered, this, &MainWindow::formatFile);
     runMenu->addAction(formatFileAction_);
 
@@ -384,6 +386,16 @@ void MainWindow::setupMenus() {
     connect(showDocAction_, &QAction::triggered, this, &MainWindow::showDocumentation);
     runMenu->addAction(showDocAction_);
 
+    // Signature help, beside Show Documentation: the two answer the same
+    // question at different moments, and share the call-tip surface.
+    signatureHelpAction_ = new QAction("Show Signature &Help", this);
+    signatureHelpAction_->setShortcut(QKeySequence("Ctrl+Shift+P"));
+    signatureHelpAction_->setToolTip(
+        "Show the parameter list of the call the caret is inside");
+    connect(signatureHelpAction_, &QAction::triggered, this,
+            &MainWindow::showSignatureHelp);
+    runMenu->addAction(signatureHelpAction_);
+
     // §6.1 of the navigation plan proposes the Edit menu; Run is where it
     // actually goes, because that is where Complete Symbol and Show
     // Documentation already live and Edit is empty. Ctrl+Shift+O is taken by
@@ -393,6 +405,15 @@ void MainWindow::setupMenus() {
     outlineAction_->setToolTip("List the definitions in this file");
     connect(outlineAction_, &QAction::triggered, this, &MainWindow::showOutline);
     runMenu->addAction(outlineAction_);
+
+    // The workspace counterpart of Show Symbols: that one lists this file,
+    // this one searches every file the server has indexed.
+    workspaceSymbolAction_ = new QAction("Find Symbol in &Project…", this);
+    workspaceSymbolAction_->setShortcut(QKeySequence("Ctrl+Shift+T"));
+    workspaceSymbolAction_->setToolTip("Search for a definition across the project");
+    connect(workspaceSymbolAction_, &QAction::triggered, this,
+            &MainWindow::findSymbolInProject);
+    runMenu->addAction(workspaceSymbolAction_);
 
     gotoDefinitionAction_ = new QAction("&Go to Definition", this);
     gotoDefinitionAction_->setShortcut(QKeySequence("F12"));
@@ -432,6 +453,42 @@ void MainWindow::setupMenus() {
     runMenu->addAction(restartLspAction_);
 
     runMenu->addSeparator();
+
+    // --- Dialect picker ---------------------------------------------------
+    //
+    // Grouped by LANGUAGE with a heading each, which is how the Try Turmeric
+    // picker settled after two revisions: a `#lang` base names a (language,
+    // reader) pair, so the list reads as readers under a language rather than
+    // ten flat rows.
+    //
+    // Curly-infix and neoteric are deliberately NOT offered: `{a + b}` is
+    // enabled in every dialect and neoteric is one of sweet-exp's three tools,
+    // so presenting them as dialects of their own misrepresents what they are.
+    // Both stay spellable, and a buffer that names one gets its row back
+    // (rebuildDialectMenu adds it when the current dialect is a hidden one).
+    runMenu->addSeparator();
+    dialectMenu_ = runMenu->addMenu("&Dialect");
+    dialectGroup_ = new QActionGroup(this);
+    dialectGroup_->setExclusive(true);
+    connect(dialectGroup_, &QActionGroup::triggered, this, [this](QAction* a) {
+        EditorView* v = editorView();
+        if (!v || !a) return;
+        const auto d = static_cast<Dialect>(a->data().toInt());
+        if (!v->setLangDirective(d)) {
+            // Already in that dialect and nothing to write -- say so rather
+            // than leaving the click looking like it did nothing.
+            statusBar()->show();
+            statusBar()->showMessage(
+                QString("Already %1").arg(DialectBaseToken(d)), 2000);
+        }
+        rebuildDialectMenu();
+    });
+    // Rebuilt when the menu opens rather than synced from every signal that
+    // could change the answer (tab switch, Save As to a new extension, the user
+    // typing a `#lang` line). Those are many and the menu is cheap, so "ask at
+    // the moment it is read" cannot go stale the way a subscription can.
+    connect(dialectMenu_, &QMenu::aboutToShow, this, &MainWindow::rebuildDialectMenu);
+    rebuildDialectMenu();
 
     auto* focusEditorAction = runMenu->addAction("Focus &Editor");
     focusEditorAction->setShortcut(QKeySequence("Ctrl+E"));
@@ -1367,7 +1424,8 @@ void MainWindow::openFile() {
     const QString last = settings.value("lastOpenDir", QDir::homePath()).toString();
     const QStringList paths = QFileDialog::getOpenFileNames(
         this, "Open", last,
-        "All files (*);;Turmeric (*.tur *.tur.sweet);;Markdown (*.md *.markdown);;"
+        "All files (*);;Turmeric (*.tur *.tur.sweet);;Scheme (*.scm);;"
+        "Markdown (*.md *.markdown);;"
         "JSON (*.json);;C (*.c *.h);;Justfile (Justfile justfile *.just)");
     if (paths.isEmpty()) return;
     for (const QString& path : paths) {
@@ -1411,7 +1469,8 @@ bool MainWindow::saveBufferAs(int index) {
     const QString last = settings.value("lastOpenDir", QDir::homePath()).toString();
     const QString path = QFileDialog::getSaveFileName(
         this, "Save As", last,
-        "Turmeric (*.tur *.tur.sweet);;Markdown (*.md *.markdown);;JSON (*.json);;"
+        "Turmeric (*.tur *.tur.sweet);;Scheme (*.scm);;"
+        "Markdown (*.md *.markdown);;JSON (*.json);;"
         "C (*.c *.h);;Justfile (Justfile justfile *.just);;All files (*)");
     if (path.isEmpty()) return false;
     if (!v->saveFile(path)) {
@@ -1436,8 +1495,84 @@ void MainWindow::clearRepl() {
     if (repl_) repl_->redrawPrompt();
 }
 
+// The dialect a fresh REPL should start in: the active buffer's.
+//
+// The REPL pane serves the editor, so restarting it while a Scheme file is open
+// should give a Scheme session -- otherwise the first Run Buffer immediately
+// switches and resets the session the user just started, which is a worse
+// first impression than the REPL simply coming up in the right language. The
+// banner names the dialect, so this is never silent.
+Dialect MainWindow::replDialectForActiveBuffer() const {
+    const EditorView* v = editorView();
+    return v ? v->dialect() : Dialect::Turmeric;
+}
+
+// Rebuild the Dialect submenu for the active buffer.
+//
+// Rebuilt rather than merely re-checked, because which ROWS exist depends on
+// the buffer: a file that names `turmeric/neoteric` gets a row for it, and no
+// other file does.
+void MainWindow::rebuildDialectMenu() {
+    if (!dialectMenu_ || !dialectGroup_) return;
+
+    for (QAction* a : dialectGroup_->actions()) {
+        dialectGroup_->removeAction(a);
+        a->deleteLater();
+    }
+    dialectMenu_->clear();
+
+    EditorView* v = editorView();
+    const Dialect current = v ? v->dialect() : Dialect::Turmeric;
+
+    // The readers worth offering, per language. `scheme` is Scheme's bare
+    // reader; its name in the menu is the language's own word for "no sweet".
+    const QVector<Dialect> offered{
+        Dialect::Turmeric, Dialect::TurmericSweet,
+        Dialect::Saffron,  Dialect::SaffronSweet,
+        Dialect::R7rs,     Dialect::R7rsSweet,
+    };
+
+    DialectLanguage heading = DialectLanguage::Turmeric;
+    bool first = true;
+    for (const Dialect d : offered) {
+        if (first || LanguageOf(d) != heading) {
+            heading = LanguageOf(d);
+            first = false;
+            // A disabled action as a heading: QMenu has no section widget that
+            // themes consistently across platforms, and a separator alone
+            // would not say which language follows.
+            QAction* label = dialectMenu_->addAction(
+                QString("— %1 —").arg(DialectLanguageName(d)));
+            label->setEnabled(false);
+        }
+        QAction* a = dialectMenu_->addAction(
+            QString("%1    (#lang %2)")
+                .arg(DialectReaderName(d), DialectBaseToken(d)));
+        a->setCheckable(true);
+        a->setData(static_cast<int>(d));
+        a->setChecked(d == current);
+        dialectGroup_->addAction(a);
+    }
+
+    // The buffer names a reader the list does not offer -- give it its row, so
+    // the menu never disagrees with the source.
+    const bool shown = offered.contains(current);
+    if (!shown) {
+        dialectMenu_->addSeparator();
+        QAction* a = dialectMenu_->addAction(
+            QString("%1    (#lang %2)")
+                .arg(DialectReaderName(current), DialectBaseToken(current)));
+        a->setCheckable(true);
+        a->setChecked(true);
+        a->setData(static_cast<int>(current));
+        dialectGroup_->addAction(a);
+    }
+
+    dialectMenu_->setEnabled(v != nullptr);
+}
+
 void MainWindow::restartRepl() {
-    repl_->restart(replWorkingDir());
+    repl_->restartIn(replWorkingDir(), replDialectForActiveBuffer());
 }
 
 void MainWindow::restartReplInDirectory() {
@@ -1453,7 +1588,7 @@ void MainWindow::restartReplInDirectory() {
 
     // A running process cannot be moved, so "set the directory" is necessarily
     // a restart — which is why the menu entry says so.
-    repl_->restart(dir);
+    repl_->restartIn(dir, replDialectForActiveBuffer());
 }
 
 void MainWindow::runBuffer() {
@@ -1809,9 +1944,8 @@ void MainWindow::startDebugSession(bool replay) {
     QStringList extraEnv;
     const QString tur = ResolveTurBinary();
     if (!tur.isEmpty()) {
-        const QString siblingStdlib =
-            QFileInfo(tur).absolutePath() + QStringLiteral("/stdlib");
-        if (QDir(siblingStdlib).exists()) {
+        const QString siblingStdlib = TurStdlibDirFor(tur);
+        if (!siblingStdlib.isEmpty()) {
             extraEnv << QStringLiteral("TUR_STDLIB_DIR=") + siblingStdlib;
         }
     }
@@ -1855,22 +1989,55 @@ void MainWindow::formatFile() {
         statusBar()->showMessage("Could not locate `tur` executable.", 4000);
         return;
     }
+
+    const Dialect dialect = v->dialect();
+
+    // Decline the two sweet bases rather than rewriting the buffer into another
+    // syntax. Measured against the pinned v0.60.1 on one two-function program:
+    //
+    //   tur format              -- shreds it: one token per line, blank-separated
+    //   tur fmt --lang sweet    -- reprints it as S-EXPRESSIONS, and keeps any
+    //                              `#lang turmeric/sweet` header, so the result
+    //                              is a file whose header contradicts its body
+    //   tur fmt --lang r7rs/sweet -- returns it verbatim (checked, kept as
+    //                              written), which is what the other two should do
+    //
+    // So `r7rs/sweet` goes through and the other two do not. Reported upstream
+    // as `fmt-reprints-sweet-as-s-expressions`; when that lands, this guard and
+    // DialectIsFormattable go together.
+    if (!DialectIsFormattable(dialect)) {
+        statusBar()->showMessage(
+            QString("`tur fmt` reprints %1 as s-expressions; formatting is "
+                    "disabled for this dialect.").arg(DialectBaseToken(dialect)),
+            6000);
+        return;
+    }
+
+    // `tur fmt --stdin`, not `tur format`. The older entry point takes no
+    // dialect, and without one a Scheme buffer formats to different bytes:
+    // `(define (f x)\n(* x 2))` comes back collapsed onto one line with a blank
+    // inserted, where `--lang r7rs` re-indents it correctly.
+    //
+    // NOTE the vocabulary: `tur fmt --lang` wants a READER spelling and rejects
+    // `saffron`, while `tur repl --lang` wants a BASE and rejects `sweet-exp`.
+    // DialectFmtLangFlag is the one that belongs here.
+    const QStringList args{"fmt", "--stdin", "--lang", DialectFmtLangFlag(dialect)};
     QProcess proc;
-    proc.start(binary, {"format"});
+    proc.start(binary, args);
     if (!proc.waitForStarted(3000)) {
-        statusBar()->showMessage("Failed to start `tur format`.", 4000);
+        statusBar()->showMessage("Failed to start `tur fmt`.", 4000);
         return;
     }
     proc.write(v->text());
     proc.closeWriteChannel();
     if (!proc.waitForFinished(10000)) {
         proc.kill();
-        statusBar()->showMessage("`tur format` timed out.", 4000);
+        statusBar()->showMessage("`tur fmt` timed out.", 4000);
         return;
     }
     if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
         const QString err = QString::fromUtf8(proc.readAllStandardError()).trimmed();
-        statusBar()->showMessage(err.isEmpty() ? QString("`tur format` failed.")
+        statusBar()->showMessage(err.isEmpty() ? QString("`tur fmt` failed.")
                                                : QString("Format error: %1").arg(err),
                                  6000);
         return;
@@ -2039,6 +2206,105 @@ void MainWindow::findReferences() {
         statusBar()->show();
         statusBar()->showMessage(QStringLiteral("References: %1").arg(spans.size()), 4000);
         emit referencesReady(spans, QString());
+    });
+}
+
+// Signature help for the call the cursor is inside, on demand.
+//
+// It also fires by itself on `(` (EditorView's charAdded hook). This is the
+// explicit entry: the tip is dismissed by any keystroke Scintilla thinks ends
+// it, and after that the only way back was to delete the paren and retype it.
+void MainWindow::showSignatureHelp() {
+    EditorView* v = editorView();
+    if (!v) return;
+    if (v->filePath().isEmpty()) {
+        statusBar()->show();
+        statusBar()->showMessage(LspManager::kSkipUnsavedReason, 4000);
+        return;
+    }
+    emit v->signatureHelpRequested(v->cursorPos());
+}
+
+// Workspace-wide symbol search: `workspace/symbol`, which the server has
+// advertised all along and nothing asked for.
+//
+// Results go through the SAME chooser and the same `referenceSpans_` as Find
+// References, so picking a row reuses jumpToSpan and the nav history with it.
+// The query seeds from the word at the caret, which is what you want nine
+// times out of ten and is still editable.
+void MainWindow::findSymbolInProject() {
+    EditorView* v = editorView();
+    LspManager* lsp = LspManager::instance();
+    if (lsp->state() != LspManager::State::Ready) {
+        const QString reason = QStringLiteral("Language server is not ready");
+        statusBar()->show();
+        statusBar()->showMessage(reason, 4000);
+        emit workspaceSymbolsReady({}, reason);
+        return;
+    }
+
+    // Seed from the word at the caret, which is what you want nine times out of
+    // ten and is still editable.
+    QString seed;
+    if (v && v->sciWidget()) {
+        ScintillaEdit* sci = v->sciWidget();
+        const int pos = v->cursorPos();
+        const int from = static_cast<int>(sci->wordStartPosition(pos, true));
+        const int to = static_cast<int>(sci->wordEndPosition(pos, true));
+        if (to > from) seed = QString::fromUtf8(v->textInRange(from, to));
+    }
+
+    bool accepted = false;
+    const QString query = QInputDialog::getText(
+        this, QStringLiteral("Find Symbol in Project"),
+        QStringLiteral("Symbol name:"), QLineEdit::Normal, seed, &accepted);
+    if (!accepted) return;  // cancelled
+    findSymbolInProjectFor(query);
+}
+
+// The half without the dialog, so the control API (and therefore the smoke
+// suite) can drive the search without a modal in the way.
+void MainWindow::findSymbolInProjectFor(const QString& query) {
+    LspManager* lsp = LspManager::instance();
+    if (lsp->state() != LspManager::State::Ready) {
+        const QString reason = QStringLiteral("Language server is not ready");
+        statusBar()->show();
+        statusBar()->showMessage(reason, 4000);
+        emit workspaceSymbolsReady({}, reason);
+        return;
+    }
+
+    lsp->requestWorkspaceSymbols(query,
+        [this](const QVector<LspSpan>& spans, const QStringList& names) {
+        EditorView* cur = editorView();
+        if (!cur) return;
+        if (spans.isEmpty()) {
+            const QString reason = QStringLiteral("No matching symbols");
+            cur->showOutlineMessage(reason);
+            statusBar()->show();
+            statusBar()->showMessage(reason, 4000);
+            emit workspaceSymbolsReady({}, reason);
+            return;
+        }
+
+        referenceSpans_ = spans;
+        QStringList rows;
+        rows.reserve(spans.size());
+        for (int i = 0; i < spans.size(); ++i) {
+            const QString path = LspManager::PathForUri(spans.at(i).uri);
+            const QString file = path.isEmpty() ? spans.at(i).uri
+                                                : QFileInfo(path).fileName();
+            rows << QStringLiteral("%1  —  %2:%3")
+                        .arg(names.value(i))
+                        .arg(file)
+                        .arg(spans.at(i).range.startLine + 1);
+        }
+        cur->showChooserList(rows);
+        // Not "all matches": an oversized workspace answers with a shorter
+        // list rather than an error, the same caveat Find References carries.
+        statusBar()->show();
+        statusBar()->showMessage(QStringLiteral("Symbols: %1").arg(spans.size()), 4000);
+        emit workspaceSymbolsReady(spans, QString());
     });
 }
 
@@ -2694,7 +2960,7 @@ void MainWindow::startSession() {
     // ended up holding — a restored session, a file opened from the CLI, or
     // nothing at all (a blank window roots the REPL at $HOME).
     repl_ = new ReplSession(terminal_, this);
-    repl_->start(replWorkingDir());
+    repl_->start(replWorkingDir(), replDialectForActiveBuffer());
 }
 
 void MainWindow::applySessionState(const QVariantMap& state) {

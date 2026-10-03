@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/dialect.h"
 #include "lsp/lsp_location.h"
 #include "lsp/lsp_symbol.h"
 #include "trace/trace_runner.h"
@@ -14,6 +15,7 @@
 #include <memory>
 #include <vector>
 
+class QActionGroup;
 class QAction;
 class QDragEnterEvent;
 class QDropEvent;
@@ -104,6 +106,10 @@ public slots:
     // the control API awaits outlineReady before the request goes out.
     void showOutline();
     // List every use of the symbol at the caret, across the workspace.
+    void rebuildDialectMenu();
+    void showSignatureHelp();
+    void findSymbolInProject();
+    void findSymbolInProjectFor(const QString& query);
     void findReferences();
     // Ask whether the symbol at the caret can be renamed, and if so open the
     // inline input. The rename itself happens when that input is committed.
@@ -130,6 +136,10 @@ signals:
     // document order; `reason` is empty on success and otherwise names the
     // state that was shown instead of a list.
     void outlineReady(const QVector<LspSymbol>& symbols, const QString& reason);
+    // Workspace-symbol search finished. Empty spans plus a reason when the
+    // search could not run or matched nothing — the same shape referencesReady
+    // uses, so the control API can tell those apart from "still in flight".
+    void workspaceSymbolsReady(const QVector<LspSpan>& spans, const QString& reason);
     // A references lookup finished. `reason` is empty on success.
     void referencesReady(const QVector<LspSpan>& spans, const QString& reason);
     // A rename round trip finished. `changedDocuments` is 0 when nothing was
@@ -158,6 +168,7 @@ private slots:
     void openDirectoryDialog();
     bool save();
     bool saveAs();
+    Dialect replDialectForActiveBuffer() const;
     void restartRepl();
     void restartReplInDirectory();
     void clearRepl();
@@ -354,6 +365,10 @@ private:
     QAction* showDocAction_ = nullptr;
     QAction* gotoDefinitionAction_ = nullptr;
     QAction* outlineAction_ = nullptr;
+    QAction* signatureHelpAction_ = nullptr;
+    QMenu* dialectMenu_ = nullptr;
+    QActionGroup* dialectGroup_ = nullptr;
+    QAction* workspaceSymbolAction_ = nullptr;
     QAction* findReferencesAction_ = nullptr;
     QAction* renameAction_ = nullptr;
     QAction* traceAction_ = nullptr;

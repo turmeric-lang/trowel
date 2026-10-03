@@ -55,6 +55,7 @@
 			<array>
 				<string>tur</string>
 				<string>sweet</string>
+				<string>scm</string>
 			</array>
 			<key>CFBundleTypeIconFile</key>
 			<string>${MACOSX_BUNDLE_ICON_FILE}</string>

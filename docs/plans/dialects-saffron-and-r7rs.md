@@ -1,8 +1,19 @@
 # Saffron, R7RS, and the `#lang` dialect axis
 
-> **Status:** proposed 2026-10-03, against Trowel `0943d95` and Turmeric
-> `v0.60.1`. Nothing below has landed. Update this line in the same change as
-> the work, part by part.
+> **Status:** Parts A–G and I executed 2026-10-03, against Trowel `0943d95`
+> and Turmeric `v0.60.1`. Part H remains deferred by design (it is two separate
+> plans). Per-part notes are inline below; the work is in the tree,
+> uncommitted.
+>
+> Two things found during execution that were not in the plan as written, both
+> now fixed: the staging step never cleared, so the bundle carried a **v0.42.2
+> `tur`** at the flat path beside the new one (A5); and the `TUR_STDLIB_DIR`
+> pin was computed as `<dir-of-binary>/stdlib`, which the prefix layout moved,
+> so four of its five call sites silently stopped applying it and an ambient
+> mise stdlib won instead (A6). A6 alone accounted for **13 of 15** smoke
+> failures on the new pin.
+>
+> One claim in §B.3 below was **wrong as filed** and is corrected there.
 
 ## 0. Summary
 
@@ -19,8 +30,8 @@ rest is triaged in Part H.
 This plan is in nine parts, in dependency order. Parts A–D are the floor:
 without them a Saffron or Scheme file in Trowel is mis-highlighted, cannot be
 run, and is mangled by Format. Parts E–G are the features. Part H triages the
-rest of the Try Turmeric work, and Part I is the three upstream bugs this
-survey turned up, which should be reported whatever Trowel does about them.
+rest of the Try Turmeric work, and Part I is the upstream bugs this
+survey turned up (six, in the end), which should be reported whatever Trowel does about them.
 
 **The load-bearing discovery** is that a dialect is not just a highlighting
 mode. `#lang r7rs` changes which prelude the REPL session has loaded, so
@@ -225,6 +236,14 @@ $TUR fmt --stdin --lang r7rs/sweet < d.sscm                      # expect: verba
 
 ## Part A — bump the bundled Turmeric to v0.60.1
 
+> **Executed.** Pin at v0.60.1 with the four SHA-256s from the release's own
+> `sha256sums.txt`; owner moved to `turmeric-lang` (no other stale URLs in the
+> tree). A3's claim verified against the new pin and the workaround deleted —
+> `:run` on a headerless `.tur.sweet` with a `defn main` now prints and returns
+> normally, where `load` still only answers `=> #<fn main>`. Two unplanned
+> fixes, A5 and A6, in the Status note above. Smoke: 15 failures → 2, and both
+> of those pass in isolation (contention, not regressions).
+
 Independent of everything else, and should land first and alone: every
 behavioural claim below is about the new toolchain.
 
@@ -278,6 +297,14 @@ plan, and it should be isolated.
 
 ## Part B — the dialect model
 
+> **Executed.** `src/editor/dialect.{h,cpp}` holds the ten-row table;
+> `Language` gained `R7rs` and `R7rsSweet` plus a `LanguageCount` sentinel the
+> Markdown guest field is now `static_assert`ed against. `.scm` registered in
+> the extension table, `EvalModeForPath`, `Info.plist.in`, the Linux MIME file
+> and both file-dialog filters. Fence tags: `sweet-exp` added (the 996-use
+> one), `scheme`/`r7rs`/`scm` repointed at the Scheme scanner, `saffron`
+> mapped to Turmeric's. See the §B.3 correction.
+
 The central design decision. `Language` (`src/editor/lexers.h:19`) is
 documented as "languages Trowel can **highlight**", and for that purpose
 Saffron is Turmeric — same reader, same tokens. But the run path, the picker,
@@ -318,13 +345,23 @@ meaningful.
 
 - **The guest-language field is masked to three bits on the way in and four
   on the way out.** `PackLexState` writes
-  `static_cast<int>(st.mdGuest) & 0x7` (`lexer_adapter.cpp:105`) into a field
-  `UnpackLexState` reads with `& 0xF` (`:131`). With ten `Language` members
-  that is already broken for the two highest: a ```` ```sh ```` fence (Sh = 8)
-  is lexed as Turmeric from its second line on, and ```` ```python ````
-  (Python = 9) as C. Adding two members makes it worse. Widen the pack mask to
-  `0xF` and add a static assertion that `Language`'s count stays below the
-  `0xF` sentinel — the enum comment promises 0..14 and the code delivers 0..7.
+  `static_cast<int>(st.mdGuest) & 0x7` into a field `UnpackLexState` reads with
+  `& 0xF`, so a guest id above 7 does not survive the round trip: Sh (8) comes
+  back as Turmeric and Python (9) as C.
+
+  **CORRECTION — this is latent, not observable.** The plan claimed a
+  ```` ```sh ```` fence "is lexed as Turmeric from its second line on". That
+  was asserted from reading the code and is wrong in practice. The packed state
+  is read only when `Lex()` is asked to start at a line other than the first,
+  and every path that was tried has Scintilla colourise from position 0
+  instead, where the seed is a default-constructed `LexState`. It was checked
+  the right way round: the narrow mask was reintroduced, rebuilt, and the
+  regression test still passed — including after an edit in the middle of a
+  40-line fence. **Fixed anyway**, because pack and unpack must agree and the
+  next language appended inherits the truncation, but no reproducer exists and
+  the test that looked like it covered this covers only multi-line fences. The
+  `static_assert` on `Language`'s count is the part that actually protects the
+  invariant.
 - **`sweet-exp` is not a recognized fence tag.** `GuestForInfo` matches
   `sweet`, `turmeric-sweet` and `tur-sweet` (`scanner_markdown.cpp:76`). The
   tag is read as a whole word, so `sweet-exp` matches none of them — and
@@ -348,6 +385,13 @@ file-dialog filter strings (`main_window.cpp:1370`, `:1414`). Mirror
 ---
 
 ## Part C — highlighting
+
+> **Executed.** Keyword sets re-ported from `editors/vim-turmeric`; R7RS and
+> R7RS-sweet are modes of the shared walker, with the Turmeric-only rules
+> (`:keyword`, `::`, `|>`, `~`, `^attr`, `#?`) gated OFF in Scheme mode and
+> `#true`/`#\x41`/`#(`/`#u8(`/`|bar|`/radix/rationals/`,@` gated on. Two new
+> style slots and theme keys. 18 new lexer assertions, including negative ones
+> proving the gate holds both ways.
 
 **C.1 Refresh the Turmeric keyword sets first.** Re-port
 `scanner_turmeric.cpp:12-70` from
@@ -431,6 +475,18 @@ style, that is a `Builtin`-set addition, not a scanner.
 
 ## Part D — the run path and the session dialect
 
+> **Executed.** `ReplSession` tracks the live session's base, started via
+> `tur repl --lang <base>` and updated from the REPL's own
+> `; language set to …` acknowledgement rather than from the send — so a
+> `#lang` the user types into the pane is picked up. Run Buffer and Run
+> Selection switch the session when the LANGUAGE differs (never for a reader),
+> report the switch, and say when it cost accumulated definitions. Restart REPL
+> starts in the active buffer's dialect. A selection out of a headerless `.scm`
+> gets a synthesized `#lang r7rs`. `lang.bases` / `lang.get` /
+> `lang.set_session` added to the control API, and the new `test_dialects.py`
+> checks the ten bases against `tur dialects --json` rather than against a
+> hardcoded list.
+
 The real work. §1.4 is the specification.
 
 **D.1 Give `ReplSession` a dialect.** It tracks the base the live session is
@@ -493,6 +549,34 @@ and it is how a Scheme-only project should start.
 
 ## Part E — the dialect picker
 
+> **Executed**, with one deliberate deviation.
+>
+> E2 (the writer) is `EditorView::setLangDirective`, all four rules, in one
+> undo group. E3 is a **Run > Dialect** submenu grouped by language, hiding
+> curly-infix and neoteric and handing a row back to a buffer that names one;
+> it rebuilds on `aboutToShow` rather than syncing from the several signals that
+> can change the answer, so it cannot go stale. E5's control surface grew
+> `lang.set` and `lang.menu`. Eight tests in `test_dialect_picker.py`, all
+> reading the BUFFER back rather than inspecting the menu — including that one
+> Ctrl+Z undoes a language switch.
+>
+> **Deviation from E1 and E4.** No runtime `tur dialects --json` read, and no
+> status-bar indicator.
+>
+> The registry read would have to drive a picker that can only offer rows this
+> build has a `Dialect` for — a base from a newer toolchain has no
+> `HighlightLanguageFor`, no scratch extension and no fmt flag here, so it
+> could be listed but not used. The drift it guards against is caught instead
+> by `test_lang_bases_matches_the_toolchains_own_registry`, which compares our
+> table to `tur dialects --json` at test time. That is the same guarantee
+> without a process spawn on every launch.
+>
+> The indicator was built and then removed: Trowel's status bar hides itself
+> whenever it has no message (`messageChanged` → `hide()`), so a permanent
+> widget would have forced it visible for the life of the window. The menu's
+> checkmark answers "which dialect am I in", and D2 already reports a session
+> switch at the moment it costs something.
+
 Port Try Turmeric's picker, including the two revisions it went through, since
 both were corrections worth inheriting.
 
@@ -547,6 +631,14 @@ smoke-tested. `editor.get_style_at` already exists for the lexer assertions.
 
 ## Part F — the formatter
 
+> **Executed.** Format File is on `tur fmt --stdin --lang <reader>`, and
+> declines `turmeric/sweet` and `saffron/sweet` with a message rather than
+> rewriting them. `test_format.py` asserts the editor's output equals the
+> TOOLCHAIN's output for the dialect, and that a sweet buffer comes back
+> byte-identical. One correction: `r7rs/sweet` is not quite byte-identical
+> either — the header survives but the blank line after it is dropped — so that
+> test asserts against `tur fmt`'s own answer instead of against the input.
+
 **F.1 Switch to `tur fmt --stdin --lang <base>`.** `MainWindow::formatFile`
 (`main_window.cpp:1850`) runs `tur format`, the older entry point, over stdin
 with no dialect. Measured, all three on the same two-function sweet buffer:
@@ -585,6 +677,46 @@ either way. Part G already adds the client plumbing.
 ---
 
 ## Part G — LSP gaps
+
+> **Executed**, two of G1's three capabilities plus G2 and G3.
+>
+> **signatureHelp** → `Run > Show Signature Help` (Ctrl+Shift+P), on the same
+> call-tip surface as hover. Deliberately NOT auto-triggered: the server
+> advertises `(` as its trigger character and answers `null` there, and at the
+> callee's name, returning a signature only once the cursor is in argument
+> position — which is after a space, i.e. most keystrokes in a lisp, each
+> costing a didChange and a compile. Measured at four positions; reported as
+> `signature-help-declines-at-its-own-trigger-character`.
+>
+> **workspace/symbol** → `Run > Find Symbol in Project…` (Ctrl+Shift+T),
+> seeded from the word at the caret, rendering into the same chooser and the
+> same `referenceSpans_` as Find References so a pick reuses `jumpToSpan` and
+> the nav history.
+>
+> **textDocument/formatting — deliberately not done.** The plan proposed it as
+> "the better long-term shape", on the worry that the handler picks its reader
+> with `reader_type_from_extension` only. That worry was **wrong**: probed
+> directly, the LSP formatter gets `#lang r7rs` in a `.tur` file right, so it
+> consults the header too. But Part F already delivers the feature correctly
+> through `tur fmt --stdin --lang`, the sweet-decline guard would be needed in
+> front of either path, and the LSP path needs the CLI as a fallback for when
+> the server is down — so switching buys one saved process spawn in exchange
+> for two code paths that must stay byte-identical. Not worth it; recorded here
+> so it reads as a decision rather than an omission.
+>
+> G2 is position-encoding negotiation. G3 is the synthesized-header workaround,
+> with the line shift threaded through all 7 outgoing positions and all 10
+> incoming range decodes.
+>
+> A gap the plan missed: `LspManager::UriFor` gated eligibility on
+> `Language::Turmeric || TurmericSweet`, making it a **third** place the set of
+> Turmeric file types lived (after the extension table and
+> `hasTurmericExtension`). Registering `.scm` in the two the plan named gave
+> Scheme files highlighting and Run Buffer but **no language server at all**,
+> silently — an ineligible view just gets an empty URI, so nothing reports a
+> refusal. Found by the G3 tests timing out waiting for a diagnostics publish
+> that was never going to come. Now asked of `DialectForFileName`, like the
+> other two.
 
 **G.1 Three unimplemented capabilities.** `tur lsp` advertises hover,
 definition, documentSymbol, documentHighlight, rename (with
@@ -701,6 +833,12 @@ REPL pane, which is the native idiom), and the "Solve this" button.
 ---
 
 ## Part I — upstream reports to file
+
+> **Executed, and there are six, not three.** Staged in
+> `docs/upstream/` rather than written into the Turmeric worktrees, which are
+> each mid-work on their own branch. The two the plan did not anticipate:
+> `:run` on a sweet file invokes `main` but leaves no definitions behind, and
+> the two `--lang` flags take different vocabularies.
 
 Three findings belong in `turmeric/docs/reported/` regardless of what Trowel
 does about them. All three are reproducible with the commands in §1.6.

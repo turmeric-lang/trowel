@@ -75,6 +75,26 @@ public:
     // indistinguishable from a jump that is still in flight.
     void requestDefinition(EditorView* view, int pos, DefinitionCallback cb);
 
+    using SignatureHelpCallback = std::function<void(const QString& text,
+                                                    int activeParameter)>;
+    // The parameter list of the call the cursor is inside.
+    //
+    // The capability Trowel was missing that costs the most in a lisp: by the
+    // time you have typed `(vec-get ` the name is behind you and the arity and
+    // argument types are exactly what you cannot see. The server advertises `(`
+    // as the trigger and space as the retrigger.
+    //
+    // Fires with an EMPTY string when there is no signature at `pos` -- which
+    // is the common case, since the server answers null anywhere but argument
+    // position. Reported rather than dropped, so a caller can tell "no
+    // signature" from "still in flight".
+    //
+    // `activeParameter` is the index the server believes the cursor is on, or
+    // -1 when it does not say. Reported rather than used to re-render the
+    // label, because the call tip surface this ends up on is plain text and
+    // cannot highlight a range.
+    void requestSignatureHelp(EditorView* view, int pos, SignatureHelpCallback cb);
+
     using SymbolsCallback = std::function<void(const QVector<LspSymbol>&)>;
     // Document outline, in the order the server returns it — which is document
     // order, and is the one thing an outline is for. Never sorted here.
@@ -83,6 +103,17 @@ public:
     // §4.2.1 measured that a file with any analysis error yields `[]`, and the
     // caller has to be able to say so.
     void requestDocumentSymbols(EditorView* view, SymbolsCallback cb);
+
+    using WorkspaceSymbolsCallback = std::function<void(const QVector<LspSpan>&,
+                                                       const QStringList& names)>;
+    // Symbols matching `query` across the whole workspace, not just this file.
+    //
+    // Parallel vectors rather than a struct: the spans are what a jump needs
+    // and the names are what a picker shows, and LspSpan has nowhere to put a
+    // name. An empty `query` is sent as-is -- the server decides whether that
+    // means "everything" or "nothing", and guessing here would be a second
+    // policy.
+    void requestWorkspaceSymbols(const QString& query, WorkspaceSymbolsCallback cb);
 
     using HighlightsCallback = std::function<void(const QVector<LspRange>&)>;
     // Every occurrence of the symbol at `pos`, from the server's index.
@@ -171,7 +202,30 @@ private:
         int generation = 0;
         QTimer* debounce = nullptr;
         bool openOnServer = false;
+        // Lines the text sent to the server has that the buffer does not --
+        // 0 normally, 1 when a `#lang` header is synthesized for it.
+        //
+        // `tur lsp` picks its reader from the `#lang` line in the document text
+        // and ignores the file extension, where the COMPILER honours the
+        // extension. So a headerless `.scm` or `.tur.sweet` file -- the
+        // idiomatic way to write either -- is analysed as Turmeric: bogus
+        // errors on every line and no symbols at all. Reported upstream as
+        // `lsp-ignores-the-file-extension`.
+        //
+        // Until that lands, such a document is sent with the header it implies
+        // prepended, and every line number is shifted back across the boundary.
+        // Delete this field, shiftedText(), and the two shift helpers together
+        // with the report.
+        int lineShift = 0;
     };
+
+    // The text to send for `uri`, and the line shift that comes with it.
+    QByteArray shiftedText(EditorView* view, int& shiftOut) const;
+    // Outgoing: a buffer position as the server's line/character.
+    QJsonObject positionJson(const QString& uri, EditorView* view, int pos) const;
+    // Incoming: a server line as the buffer's.
+    int unshiftLine(const QString& uri, int line) const;
+    int lineShiftFor(const QString& uri) const;
 
     bool ensureStarted();
     void setState(State s, const QString& error = {});

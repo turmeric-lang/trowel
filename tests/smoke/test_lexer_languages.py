@@ -17,6 +17,20 @@ TUR_CBLOCK = 21
 TUR_NEOTERIC = 25
 TUR_IDENT = 26
 TUR_SWEET_MARKER = 28
+TUR_SCHEME_VECTOR = 29
+TUR_BAR_SYMBOL = 30
+TUR_LINE_COMMENT = 1
+TUR_BLOCK_COMMENT = 3
+TUR_STRING = 4
+TUR_NUMBER = 6
+TUR_BOOLEAN = 7
+TUR_KEYWORD_LIT = 9
+TUR_CHAR_LIT = 10
+TUR_METADATA = 11
+TUR_QUOTE = 12
+TUR_OPERATOR = 13
+TUR_SPECIAL = 19
+TUR_BUILTIN = 20
 TUR_BAND = range(0, 31)
 RAINBOW_BAND = range(40, 48)
 
@@ -543,3 +557,163 @@ def test_language_switches_when_saved_under_a_new_extension(trowel, tmp_path):
 
     trowel.call("editor.save_as", {"path": str(tmp_path / "notes.md")})
     assert style_at(trowel, 0) == MD_HEADING
+
+
+# --- R7RS Scheme ------------------------------------------------------------
+#
+# `.scm` is Scheme by extension upstream, so these fixtures carry no `#lang`
+# line -- the headerless case, which is the idiomatic one for a Scheme file.
+
+
+@pytest.fixture
+def scm(trowel, fixture_files):
+    return Doc(trowel, fixture_files / "scheme_syntax.scm")
+
+
+def test_scm_extension_selects_the_scheme_scanner(scm):
+    # `define` is a Scheme definition form. It is also in Turmeric's own define
+    # set, so this alone would not prove the dialect -- the tests below do.
+    assert scm.style_of("define scm-bool") == TUR_DEFINE
+
+
+def test_scheme_booleans_both_spellings(scm):
+    assert scm.style_of("#true") == TUR_BOOLEAN
+    assert scm.style_of("#f", after="scm-bool-short") == TUR_BOOLEAN
+
+
+def test_scheme_character_literals(scm):
+    # The whole `#\x41`, not `#\x` with `41` left over as a number.
+    assert scm.style_of("#\\x41") == TUR_CHAR_LIT
+    assert scm.style_of("41", after="#\\x") == TUR_CHAR_LIT
+    assert scm.style_of("#\\space") == TUR_CHAR_LIT
+
+
+def test_scheme_vector_and_bytevector_prefixes(scm):
+    assert scm.style_of("#(") == TUR_SCHEME_VECTOR
+    assert scm.style_of("#u8(") == TUR_SCHEME_VECTOR
+    # Only the prefix is painted: the paren still counts toward nesting depth,
+    # so it keeps its rainbow colour and the unmatched-closer check stays honest.
+    assert scm.style_of("(", after="scm-vec #") in RAINBOW_BAND
+
+
+def test_scheme_numeric_prefixes_and_rationals(scm):
+    assert scm.style_of("#xff") == TUR_NUMBER
+    assert scm.style_of("#e1.5") == TUR_NUMBER
+    # `1/2` is one number, not `1` followed by the symbol `/2`.
+    assert scm.style_of("1/2") == TUR_NUMBER
+    assert scm.style_of("/2", after="scm-ratio ") == TUR_NUMBER
+
+
+def test_scheme_bar_symbols(scm):
+    assert scm.style_of("|a bar symbol|") == TUR_BAR_SYMBOL
+
+
+def test_scheme_unquote_forms(scm):
+    assert scm.style_of(",scm-hex") == TUR_QUOTE
+    assert scm.style_of(",@") == TUR_QUOTE
+
+
+def test_scheme_special_forms(scm):
+    assert scm.style_of("define-record-type") == TUR_DEFINE
+    assert scm.style_of("display") == TUR_BUILTIN
+    assert scm.style_of("newline") == TUR_BUILTIN
+
+
+def test_scheme_shares_turmerics_comment_forms(scm):
+    assert scm.style_of("#| a block comment") == TUR_BLOCK_COMMENT
+    assert scm.style_of("#;(a datum comment") == TUR_LINE_COMMENT
+
+
+def test_turmeric_only_syntax_is_not_applied_in_a_scheme_buffer(scm):
+    # A leading-colon identifier is a legal Scheme symbol, not a keyword
+    # literal. Painting it as one would be a claim about the wrong language --
+    # there is an upstream report on exactly this spelling.
+    assert scm.style_of(":not-a-keyword-literal") == TUR_IDENT
+
+
+def test_turmeric_buffer_keeps_its_own_syntax(trowel, tmp_path):
+    # The other side of the gate: the Scheme rules must not leak into a `.tur`
+    # buffer. `|>` stays an operator and `|a b|` is not a bar symbol.
+    doc = lang_doc(trowel, tmp_path, "gate.tur",
+                   "(def piped (|> 1 2))\n(def kw :a-keyword)\n(def meta ^mut)\n")
+    assert doc.style_of("|>") == TUR_OPERATOR
+    assert doc.style_of(":a-keyword") == TUR_KEYWORD_LIT
+    assert doc.style_of("^mut") == TUR_METADATA
+
+
+def test_lang_r7rs_in_a_tur_file_selects_scheme(trowel, tmp_path):
+    doc = lang_doc(trowel, tmp_path, "b.tur",
+                   "#lang r7rs\n(define v #(1 2))\n(define n 1/2)\n")
+    assert doc.style_of("#(") == TUR_SCHEME_VECTOR
+    assert doc.style_of("1/2") == TUR_NUMBER
+
+
+def test_lang_r7rs_sweet_is_scheme_and_sweet_at_once(trowel, tmp_path):
+    doc = lang_doc(trowel, tmp_path, "c.tur",
+                   "#lang r7rs/sweet\ndefine v #(1 2)\ndisplay $ + 1 2\n")
+    assert doc.style_of("#(") == TUR_SCHEME_VECTOR
+    assert doc.style_of("$") == TUR_SWEET_MARKER
+
+
+def test_lang_saffron_sweet_is_sweet(trowel, tmp_path):
+    # The regression this part exists for: `#lang saffron/sweet` used to fall
+    # through to plain, UNSWEET Turmeric, so the reader's markers went unpainted.
+    doc = lang_doc(trowel, tmp_path, "d.tur",
+                   "#lang saffron/sweet\ndef x $ + 1 2\n")
+    assert doc.style_of("$") == TUR_SWEET_MARKER
+    assert doc.style_of("def") == TUR_DEFINE
+
+
+def test_lang_saffron_is_turmeric_to_the_scanner(trowel, tmp_path):
+    doc = lang_doc(trowel, tmp_path, "e.tur",
+                   "#lang saffron\n(defn double [x] (* x 2))\n")
+    assert doc.style_of("defn") == TUR_DEFINE
+
+
+# --- Markdown fences for the dialects ---------------------------------------
+
+
+def test_markdown_sweet_exp_fence_is_recognized(trowel, tmp_path):
+    # ```sweet-exp is the tag Turmeric's own guides use for every
+    # sweet-expression example -- 996 of them. It was not in the accept list, so
+    # all of them rendered as undifferentiated code.
+    body = "text\n\n```sweet-exp\ndef fenced-x 7\ndef g $ + 1 2\n```\n"
+    doc = lang_doc(trowel, tmp_path, "sweetfence.md", body)
+    assert doc.style_of("def fenced-x") == TUR_DEFINE
+    assert doc.style_of("$") == TUR_SWEET_MARKER
+
+
+def test_markdown_scheme_fence_delegates_to_scheme(trowel, tmp_path):
+    body = "text\n\n```scheme\n(define v #(1 2))\n(display v)\n```\n"
+    doc = lang_doc(trowel, tmp_path, "schemefence.md", body)
+    assert doc.style_of("#(") == TUR_SCHEME_VECTOR
+    assert doc.style_of("display") == TUR_BUILTIN
+
+
+def test_markdown_guest_applies_to_every_line_of_a_fence(trowel, tmp_path):
+    """Every pre-existing fence assertion sits on the fence's FIRST line, which
+    is the line that sets the per-line guest field rather than reading it back.
+    This covers the later lines.
+
+    It does not, however, catch the pack/unpack mask asymmetry described in
+    lexer_adapter.cpp -- that was checked by reintroducing the narrow mask, and
+    this test still passed, because `editor.get_style_at` has Scintilla
+    colourise from position 0 and the packed seed is never consulted. Kept for
+    what it does cover.
+    """
+    body = (
+        "text\n\n"
+        "```python\n"
+        "import os\n"
+        "import sys\n"
+        "```\n\n"
+        "```bash\n"
+        "export FOO=1\n"
+        "export BAR=2\n"
+        "```\n"
+    )
+    doc = lang_doc(trowel, tmp_path, "secondline.md", body)
+    assert doc.style_of("import os") == PY_KEYWORD
+    assert doc.style_of("import sys") == PY_KEYWORD      # the line that regressed
+    assert doc.style_of("export FOO=1") == SH_BUILTIN
+    assert doc.style_of("export BAR=2") == SH_BUILTIN    # ditto

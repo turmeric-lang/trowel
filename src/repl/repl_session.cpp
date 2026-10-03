@@ -84,6 +84,17 @@ QString displayPath(const QString& path) {
 
 } // namespace
 
+QString TurStdlibDirFor(const QString& turBinary) {
+    if (turBinary.isEmpty()) return {};
+    const QString turDir = QFileInfo(turBinary).absolutePath();
+    const QString flat = turDir + QStringLiteral("/stdlib");
+    if (QDir(flat).exists()) return flat;
+    const QString prefix =
+        QDir::cleanPath(turDir + QStringLiteral("/../share/turmeric/stdlib"));
+    if (QDir(prefix).exists()) return prefix;
+    return {};
+}
+
 QString ResolveTurBinary() {
     const QString override = QSettings().value("repl/turBinary").toString();
     QString resolved = ifExecutable(override);
@@ -101,7 +112,7 @@ bool ReplSession::isRunning() const {
     return pty_ && pty_->isRunning();
 }
 
-void ReplSession::start(const QString& workingDir) {
+void ReplSession::start(const QString& workingDir, Dialect dialect) {
     if (isRunning()) return;
 
     lastWorkingDir_ = workingDir;
@@ -144,41 +155,60 @@ void ReplSession::start(const QString& workingDir) {
         return;
     }
 
-    // Pin the stdlib to whichever `tur` we resolved: each release ships `tur`
-    // and `stdlib/` side by side, so use the stdlib next to the chosen binary.
-    // This keeps binary and stdlib in the same version even when the ambient
-    // environment (e.g. a mise `TUR_STDLIB_DIR` export pinning an older
-    // toolchain) would otherwise leak in and cause a version mismatch. Only
-    // override when that sibling stdlib actually exists — a bare shim without an
-    // adjacent stdlib falls through to the inherited environment.
-    //
-    // Both archive shapes again: `stdlib/` sits beside the binary in the flat
-    // layout, and one level up under `share/turmeric/` in the prefix one. Miss
-    // the second and a prefix-layout bundle silently loses this pin -- which is
-    // the case the pin exists for, since it then inherits exactly the ambient
-    // TUR_STDLIB_DIR it was written to override.
+    // Pin the stdlib to whichever `tur` we resolved, so the ambient environment
+    // cannot pair it with another version's. See TurStdlibDirFor.
     QStringList extraEnv;
-    const QString turDir = QFileInfo(resolved).absolutePath();
-    QString siblingStdlib = turDir + QStringLiteral("/stdlib");
-    if (!QDir(siblingStdlib).exists()) {
-        siblingStdlib =
-            QDir::cleanPath(turDir + QStringLiteral("/../share/turmeric/stdlib"));
-    }
-    if (QDir(siblingStdlib).exists()) {
+    const QString siblingStdlib = TurStdlibDirFor(resolved);
+    if (!siblingStdlib.isEmpty()) {
         extraEnv << QStringLiteral("TUR_STDLIB_DIR=") + siblingStdlib;
     }
 
-    if (!pty_->start(resolved, {"repl"}, workingDir, extraEnv)) {
+    // `tur repl --lang <base>` starts the session in a dialect, which is
+    // cheaper and more honest than starting in Turmeric and immediately
+    // switching: the switch resets the environment, so the first thing the user
+    // would see in a Scheme project is a session being thrown away.
+    //
+    // Turmeric is passed as NO FLAG rather than `--lang turmeric`, so a plain
+    // start is byte-identical to what it always was.
+    //
+    // NOTE: this flag takes a BASE (`saffron/sweet`, `r7rs/sweet`) and rejects
+    // reader spellings -- `--lang sweet-exp` and `--lang scheme` are both
+    // "unknown --lang". `tur fmt --lang` is the other way round; see
+    // DialectFmtLangFlag.
+    QStringList replArgs{"repl"};
+    if (dialect != Dialect::Turmeric) {
+        replArgs << "--lang" << QString::fromLatin1(DialectBaseToken(dialect));
+    }
+    if (!pty_->start(resolved, replArgs, workingDir, extraEnv)) {
         // startFailed will fire and report.
         return;
     }
+    dialect_ = dialect;
+    lastStartDialect_ = dialect;
+    dirtied_ = false;
+    emit dialectChanged(dialect_);
     onStarted();
+}
+
+void ReplSession::restartIn(const QString& workingDir, Dialect dialect) {
+    stop();
+    start(workingDir.isEmpty() ? lastWorkingDir_ : workingDir, dialect);
+}
+
+bool ReplSession::switchDialect(Dialect d) {
+    if (!isRunning()) return false;
+    if (d == dialect_) return true;
+    // The REPL's own `#lang` handler does the work, including the environment
+    // reset. dialect_ is NOT updated here: it moves when the acknowledgement
+    // comes back (scanDialectReports), so a switch the REPL refused does not
+    // leave us believing it happened.
+    return sendCommand(QByteArray("#lang ") + DialectBaseToken(d));
 }
 
 void ReplSession::restart(const QString& workingDir) {
     stop();
     view_->showBanner("[trowel] restarting REPL…");
-    start(workingDir.isEmpty() ? lastWorkingDir_ : workingDir);
+    start(workingDir.isEmpty() ? lastWorkingDir_ : workingDir, lastStartDialect_);
 }
 
 void ReplSession::stop() {
@@ -188,6 +218,16 @@ void ReplSession::stop() {
 
 bool ReplSession::sendCommand(const QByteArray& line) {
     if (!isRunning()) return false;
+    // Anything sent to the prompt may define something, so the session counts
+    // as dirtied -- except the three things that RESET it, after which there is
+    // nothing left for a dialect switch to discard. `:run` installs a fresh
+    // environment of its own (see run_buffer.cpp), and a `#lang` switch rewinds
+    // to the pinned preload.
+    const QByteArray trimmed = line.trimmed();
+    const bool resets = trimmed == ":reset"
+                        || trimmed.startsWith(":run")
+                        || trimmed.startsWith("#lang ");
+    dirtied_ = !resets;
     QByteArray payload = line;
     if (!payload.endsWith('\r') && !payload.endsWith('\n')) payload.append('\r');
     // Optimistically enter busy state. The next OSC 133;A from the REPL flips
@@ -252,8 +292,73 @@ void ReplSession::onPtyData(const QByteArray& bytes) {
     }
 
     scanCwdReports(bytes);
+    scanDialectReports(bytes);
 
     emit dataReceived(bytes);
+}
+
+// Scan for the REPL's `#lang` acknowledgements.
+//
+// Three wordings, all pinned upstream by tests/run-flags.sh:
+//
+//   ; language set to r7rs, reader r7rs (session reset)
+//   ; reader set to turmeric/sweet (session reset)
+//   ; reader already set to turmeric (saffron)
+//
+// Only the first names the LANGUAGE, which is the half that matters here -- a
+// reader-only switch leaves the prelude alone. The line is matched rather than
+// the send trusted, so a `#lang` the user typed into the pane directly is
+// picked up too, and one the REPL refused is not.
+//
+// Matched on plain text, not an OSC sequence, because it is ordinary REPL
+// output. That makes it best-effort by nature: it is scanned out of a byte
+// stream that may split mid-line. Missing one costs a stale `dialect()` until
+// the next switch, which degrades to an unnecessary `#lang` send -- harmless,
+// since the REPL answers "already set to" and resets nothing.
+void ReplSession::scanDialectReports(const QByteArray& bytes) {
+    static constexpr char kPrefix[] = "; language set to ";
+    static constexpr int kPrefixLen = sizeof(kPrefix) - 1;
+
+    int i = 0;
+    while ((i = bytes.indexOf(kPrefix, i)) >= 0) {
+        const int nameStart = i + kPrefixLen;
+        const int comma = bytes.indexOf(',', nameStart);
+        if (comma < 0) break;  // split across reads; the next switch re-syncs
+        const QByteArray language = bytes.mid(nameStart, comma - nameStart).trimmed();
+
+        // `reader <name>` follows. The pair is what names a base, and
+        // reader_type_name returns the fully-qualified Turmeric spelling
+        // ("turmeric/sweet") while Scheme's readers answer "r7rs" and
+        // "r7rs/sweet", so the base is reassembled rather than parsed.
+        const int readerAt = bytes.indexOf("reader ", comma);
+        QByteArray reader;
+        if (readerAt >= 0) {
+            int e = readerAt + 7;
+            while (e < bytes.size() && bytes[e] != ' ' && bytes[e] != '\n'
+                   && bytes[e] != '\r' && bytes[e] != '(') {
+                ++e;
+            }
+            reader = bytes.mid(readerAt + 7, e - readerAt - 7).trimmed();
+        }
+
+        Dialect found = Dialect::Turmeric;
+        bool ok = false;
+        // A sweet reader under a dynamic language is spelled by the language
+        // plus the reader's suffix; everything else is named by one of the two
+        // halves on its own.
+        if (reader.endsWith("/sweet") || reader == "sweet") {
+            ok = DialectFromBaseToken(language + "/sweet", found);
+        }
+        if (!ok) ok = DialectFromBaseToken(language, found);
+        if (!ok && !reader.isEmpty()) ok = DialectFromBaseToken(reader, found);
+
+        if (ok && found != dialect_) {
+            dialect_ = found;
+            dirtied_ = false;  // a language switch resets the environment
+            emit dialectChanged(dialect_);
+        }
+        i = comma;
+    }
 }
 
 // Scan for OSC 7 cwd reports: ESC ] 7 ; file://<host>/<path> {BEL | ESC \}.

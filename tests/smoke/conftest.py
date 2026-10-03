@@ -23,6 +23,20 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
+# POSITIONS ARE BYTE OFFSETS, not character indices.
+#
+# Every `pos` the control API takes or returns is a Scintilla position, which
+# counts bytes. A Python `str.index` counts characters, and the two agree only
+# while the file is pure ASCII — so a fixture containing one non-ASCII byte
+# (`fixtures/symbols.tur` has a `§`) silently shifts every offset computed the
+# easy way, and the symptom is not an error but a request answered about the
+# wrong spot. That reads exactly like the feature being broken.
+#
+# Convert explicitly when a test derives an offset from text:
+#
+#     chars = text.index("needle")
+#     pos = len(text[:chars].encode("utf-8"))
+
 
 def _resolve_bin() -> Path:
     """Locate the built trowel binary for the host platform.
@@ -75,7 +89,17 @@ class TrowelProc:
                 self.proc.wait(timeout=2)
 
 
-def _wait_for_socket(path: str, timeout: float = 5.0) -> None:
+def _wait_for_socket(path: str, timeout: float = 20.0) -> None:
+    """Wait for the control socket, which Trowel creates AFTER constructing its
+    window and starting its session (src/main.cpp).
+
+    The timeout was 5s against a measured 3-4s cold start on an idle machine --
+    about a second of headroom. On a loaded one (a concurrent `just build` is
+    enough) startup reaches 8s and every test in the file fails in setup with
+    "control socket never appeared", which looks like a product bug and is not
+    one. 20s costs nothing on a healthy run, because this returns as soon as the
+    socket shows up.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         if os.path.exists(path):
@@ -123,18 +147,43 @@ def _launch_trowel(tmp_path: Path, args: list[str] | None = None) -> TrowelProc:
     # Force English so REPL banners are predictable.
     env.setdefault("LC_ALL", "en_US.UTF-8")
 
-    proc = subprocess.Popen(
-        [str(BIN), f"--control-socket-path={sock}", *(args or [])],
-        stdout=stdout_path.open("ab"),
-        stderr=subprocess.STDOUT,
-        env=env,
-    )
-    try:
-        _wait_for_socket(sock)
-    except Exception:
-        proc.terminate()
-        raise
-    return TrowelProc(proc=proc, socket_path=sock, stdout_path=stdout_path, home=home)
+    # Launched with ONE retry, on a fresh socket path.
+    #
+    # Startup is 3-4s on an idle machine and the window is built before the
+    # socket is created (src/main.cpp), so a transient stall -- a cold font
+    # cache, another build on the box, cfprefsd being slow -- pushes it past any
+    # fixed deadline. Raising the deadline alone was tried: at 5s whole files
+    # failed in setup, and at 20s it still lost one launch in roughly three
+    # hundred, mid-run, with nothing else competing.
+    #
+    # A retry is the right shape for that, and it keeps the failure honest: this
+    # still raises when BOTH attempts fail, which is what a real startup break
+    # looks like. A flake that only ever cost wall-clock is not worth reporting
+    # as a product failure.
+    last: Exception | None = None
+    for attempt in (1, 2):
+        if attempt > 1:
+            sock = f"/tmp/trowel-smoke-{uuid.uuid4().hex}.sock"
+        proc = subprocess.Popen(
+            [str(BIN), f"--control-socket-path={sock}", *(args or [])],
+            stdout=stdout_path.open("ab"),
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+        try:
+            _wait_for_socket(sock)
+        except Exception as exc:  # noqa: BLE001 - re-raised below
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            last = exc
+            continue
+        return TrowelProc(proc=proc, socket_path=sock, stdout_path=stdout_path,
+                          home=home)
+    assert last is not None
+    raise last
 
 
 # ---------- helpers used inside fixtures ----------
@@ -265,6 +314,27 @@ def trowel_session(tmp_path: Path) -> Iterator[Session]:
         yield session
     finally:
         session.cleanup()
+
+
+@pytest.fixture
+def tur_binary() -> str:
+    """The bundled `tur`, resolved the way Trowel resolves it.
+
+    For tests that need the TOOLCHAIN's own answer as an oracle -- "did the
+    editor produce what `tur` produces" is a much stronger assertion than "did
+    the editor change something".
+
+    Both published archive shapes are probed, as src/repl/repl_session.cpp does:
+    the released .tar.gz targets shipped `tur` at the archive root through
+    v0.46.0 and under `bin/` from v0.47.0 on.
+    """
+    root = (BIN.parent.parent / "Resources" / "turmeric" if sys.platform == "darwin"
+            else BIN.parent / "turmeric")
+    exe = "tur.exe" if sys.platform == "win32" else "tur"
+    for cand in (root / "bin" / exe, root / exe):
+        if cand.exists():
+            return str(cand)
+    pytest.skip(f"no bundled tur under {root}")
 
 
 @pytest.fixture

@@ -84,6 +84,8 @@ const QHash<QString, int>& StyleKeyMap() {
         {"identifier",   id(TurStyle::Identifier)},
         {"invalid",      id(TurStyle::Invalid)},
         {"sweetMarker",  id(TurStyle::SweetMarker)},
+        {"schemeVector", id(TurStyle::SchemeVector)},
+        {"barSymbol",    id(TurStyle::BarSymbol)},
         {"rainbow0",     id(TurStyle::Rainbow0)},
         {"rainbow1",     id(TurStyle::Rainbow1)},
         {"rainbow2",     id(TurStyle::Rainbow2)},

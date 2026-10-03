@@ -128,6 +128,13 @@ void ScanTurmericLine(const ScanInput& in, LexState& st, Emitter& out);
 // Turmeric with the sweet-expression reader's markers recognized. Identical to
 // ScanTurmericLine apart from the extra marker tokens, so both share an impl.
 void ScanTurmericSweetLine(const ScanInput& in, LexState& st, Emitter& out);
+// R7RS Scheme, and Scheme under SRFI-110 sweet-expressions. A third and fourth
+// mode of the same walker: the overlap with Turmeric is most of a lisp scanner
+// (`#|` block comments, `#;` datum comments, strings, quote, rainbow brackets),
+// so what these add is the Scheme lexeme set and what they SUBTRACT is the
+// Turmeric-only syntax that would otherwise misread a Scheme buffer.
+void ScanR7rsLine(const ScanInput& in, LexState& st, Emitter& out);
+void ScanR7rsSweetLine(const ScanInput& in, LexState& st, Emitter& out);
 void ScanCLine(const ScanInput& in, LexState& st, Emitter& out);
 void ScanMarkdownLine(const ScanInput& in, LexState& st, Emitter& out);
 void ScanJsonLine(const ScanInput& in, LexState& st, Emitter& out);

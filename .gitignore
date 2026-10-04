@@ -14,3 +14,14 @@ __pycache__/
 
 # AppImage build outputs
 dist/*.AppImage
+
+# Smoke-test failure debris. `pytest_runtest_makereport` (tests/smoke/conftest.py)
+# writes a `.state.json` dump and a `.trowel.log` here ONLY when a test fails, so
+# a committed file records a failure on somebody's machine at some point: nothing
+# reads them, no test depends on them, and a green run leaves stale ones in place
+# looking current. They also embed absolute paths.
+#
+# CI already does this the right way -- .github/workflows/ci.yml has an "Upload
+# smoke artifacts on failure" step pointing at this directory, which works
+# whether or not it is tracked.
+tests/smoke/artifacts/

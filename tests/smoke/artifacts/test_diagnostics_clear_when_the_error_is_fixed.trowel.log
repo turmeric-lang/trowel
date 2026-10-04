@@ -1,9 +1,0 @@
-qt.qpa.fonts: Populating font family aliases took 114 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
-This plugin does not support propagateSizeHints()
-trowel-control-socket: /tmp/trowel-smoke-3c35384cee98401d85e814c0708a8815.sock
-This plugin does not support propagateSizeHints()
-QWidget::setWindowModified: The window title does not contain a '[*]' placeholder
-[lsp] tur: TUR_STDLIB_DIR=/Users/rjungemann/.local/share/mise/installs/turmeric/0.42.2/stdlib overrides the stdlib beside this binary (/Users/rjungemann/Projects/trowel/build/macos-debug/trowel.app/Contents/Resources/turmeric/share/turmeric/stdlib), and carries no VERSION stamp to check it against v0.60.1.
-tur: a stdlib from a different release will miscompile against this compiler; unset it if that was not deliberate.
-This plugin does not support propagateSizeHints()
-QWidget::setWindowModified: The window title does not contain a '[*]' placeholder

@@ -1,5 +1,0 @@
-qt.qpa.fonts: Populating font family aliases took 113 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
-This plugin does not support propagateSizeHints()
-trowel-control-socket: /tmp/trowel-smoke-cddf12da19a94a039a8b92edfc7a955b.sock
-This plugin does not support propagateSizeHints()
-QWidget::setWindowModified: The window title does not contain a '[*]' placeholder

@@ -91,7 +91,35 @@ export QMAKE
 # Bundle tur's libedit dependency chain (libedit -> libtinfo/libbsd/libmd) so
 # the bundled REPL runs on hosts that don't ship libedit2. linuxdeploy pulls in
 # transitive deps automatically.
-LIBEDIT="$(ldd "$APPDIR/usr/bin/turmeric/tur" 2>/dev/null | awk '/libedit/{print $3}')"
+#
+# BOTH archive layouts are probed. `tur` sits at `bin/tur` under the prefix
+# layout the released archives have used since v0.47.0, and at the archive root
+# under the flat layout before that -- the same split src/repl/repl_session.cpp
+# probes for the bundled binary and its stdlib.
+#
+# This line was `ldd "$APPDIR/usr/bin/turmeric/tur"`, the flat path only, and it
+# is what broke every AppImage build from v0.3.0 onward -- the release where the
+# pin crossed v0.46.0 into v0.60.1 and the layout changed under it. The failure
+# was silent and looked like something else entirely: under `set -euo pipefail`
+# a failing `ldd` fails the pipeline, `pipefail` propagates it out of the
+# command substitution, the assignment fails, and `set -e` ends the script with
+# no message, because stderr is discarded. In the log that appeared as
+# `exit code 1` immediately after the tool fetches, so two releases' worth of
+# investigation went looking at curl.
+#
+# Hence `|| true` as well: a missing or unreadable `tur` must degrade to the
+# warning below, which is what the warning is for. Bundling the wrong libedit
+# is a problem; not finding one is a note.
+TUR_BIN=""
+for cand in "$APPDIR/usr/bin/turmeric/bin/tur" "$APPDIR/usr/bin/turmeric/tur"; do
+    if [ -x "$cand" ]; then TUR_BIN="$cand"; break; fi
+done
+LIBEDIT=""
+if [ -n "$TUR_BIN" ]; then
+    LIBEDIT="$(ldd "$TUR_BIN" 2>/dev/null | awk '/libedit/{print $3}' || true)"
+else
+    echo "==> WARNING: no bundled tur under $APPDIR/usr/bin/turmeric (checked bin/tur and tur)" >&2
+fi
 EXTRA_LIB_ARGS=()
 if [ -n "$LIBEDIT" ] && [ -e "$LIBEDIT" ]; then
     EXTRA_LIB_ARGS+=(--library "$LIBEDIT")

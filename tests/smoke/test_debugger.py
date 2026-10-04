@@ -121,6 +121,33 @@ def _wait_state(trowel, target, timeout=8.0):
     return trowel.call("debug.status")
 
 
+def _wait_output(trowel, predicate, timeout=8.0):
+    """Poll `debug.status`'s console transcript until `predicate(output)` or a
+    timeout, and return the last transcript seen.
+
+    A seek is answered asynchronously -- the adapter re-sends the whole
+    transcript as `replayOutput` and the console swaps -- so there is no reply
+    to await, only a state to observe. The two tests below used a fixed
+    `time.sleep(0.8)` and asserted straight after, which is a bet that the
+    round trip fits in 800ms: on a loaded machine it does not, and
+    `test_seeking_backwards_rewinds_the_console` then failed on an empty
+    transcript while passing in isolation.
+
+    Polling is also what makes the ASSERTION honest. Waiting for
+    `output == ""` and waiting for `"tick" in output` are different questions,
+    and a shared sleep cannot tell "not yet" from "never" for either of them.
+    """
+    import time
+    deadline = time.time() + timeout
+    out = ""
+    while time.time() < deadline:
+        out = trowel.call("debug.status")["output"]
+        if predicate(out):
+            return out
+        time.sleep(0.05)
+    return out
+
+
 def _step(trowel, kind="in", timeout=5.0):
     """Step, then wait for the resulting stop to actually land.
 
@@ -716,14 +743,15 @@ def test_seeking_backwards_rewinds_the_console(trowel, fixture_files: Path):
     """
     prog, tl = _replay_with_timeline(trowel, fixture_files, _RECURSIVE, "tl_out.tur")
     try:
-        import time
         trowel.call("debug.seek", {"index": tl["steps"] - 1})
-        time.sleep(0.8)
-        assert "tick" in trowel.call("debug.status")["output"]
+        out = _wait_output(trowel, lambda o: "tick" in o)
+        assert "tick" in out, out
 
+        # Rewinding to the start must SHORTEN the transcript back to nothing --
+        # the one thing a time-travel console must not get wrong.
         trowel.call("debug.seek", {"index": 0})
-        time.sleep(0.8)
-        assert trowel.call("debug.status")["output"] == ""
+        out = _wait_output(trowel, lambda o: o == "")
+        assert out == "", out
         trowel.call("debug.stop")
     finally:
         prog.unlink(missing_ok=True)

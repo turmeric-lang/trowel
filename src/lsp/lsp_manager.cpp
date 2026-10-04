@@ -276,43 +276,8 @@ void LspManager::documentChanged(EditorView* view) {
     if (doc->debounce) doc->debounce->start();  // restarts, coalescing bursts
 }
 
-QByteArray LspManager::shiftedText(EditorView* view, int& shiftOut) const {
-    shiftOut = 0;
-    const QByteArray text = view->text();
-    const Dialect d = view->dialect();
-
-    // Only when the dialect came from the EXTENSION rather than from a header:
-    // a buffer that already carries a `#lang` line needs nothing, and a
-    // Turmeric buffer is what the server assumes anyway.
-    if (d == Dialect::Turmeric) return text;
-    int ignoredStart = 0, ignoredEnd = 0;
-    if (LangDirectiveSpan(text, ignoredStart, ignoredEnd)) return text;
-
-    shiftOut = 1;
-    return QByteArray("#lang ") + DialectBaseToken(d) + "\n" + text;
-}
-
-QJsonObject LspManager::positionJson(const QString& uri, EditorView* view,
-                                     int pos) const {
-    LspPosition p = LspPositionFromPos(view->sciWidget(), pos);
-    const auto it = docs_.constFind(uri);
-    if (it != docs_.constEnd()) p.line += it->lineShift;
-    return LspPositionToJson(p);
-}
-
-int LspManager::lineShiftFor(const QString& uri) const {
-    const auto it = docs_.constFind(uri);
-    return it == docs_.constEnd() ? 0 : it->lineShift;
-}
-
-int LspManager::unshiftLine(const QString& uri, int line) const {
-    const auto it = docs_.constFind(uri);
-    if (it == docs_.constEnd()) return line;
-    const int shifted = line - it->lineShift;
-    // A diagnostic ON the synthesized header has nowhere to go in the buffer;
-    // clamp to line 0 rather than emitting a negative line, which downstream
-    // would turn into a position of -1.
-    return shifted < 0 ? 0 : shifted;
+QJsonObject LspManager::positionJson(EditorView* view, int pos) const {
+    return LspPositionToJson(LspPositionFromPos(view->sciWidget(), pos));
 }
 
 void LspManager::sendDidOpen(const QString& uri) {
@@ -322,15 +287,12 @@ void LspManager::sendDidOpen(const QString& uri) {
 
     DocState& doc = docs_[uri];
     doc.openOnServer = true;
-    int shift = 0;
-    const QByteArray text = shiftedText(view, shift);
-    doc.lineShift = shift;
     client_->notify("textDocument/didOpen", QJsonObject{
         {"textDocument", QJsonObject{
             {"uri", uri},
             {"languageId", kLanguageId},
             {"version", doc.version},
-            {"text", QString::fromUtf8(text)},
+            {"text", QString::fromUtf8(view->text())},
         }},
     });
 }
@@ -354,13 +316,10 @@ void LspManager::sendDidChange(const QString& uri) {
     // a `#lang` line into a `.scm` buffer at any point, and from then on the
     // synthesized one must stop being added -- otherwise the document gains a
     // second header and every line is off by one.
-    int shift = 0;
-    const QByteArray text = shiftedText(view, shift);
-    it->lineShift = shift;
     client_->notify("textDocument/didChange", QJsonObject{
         {"textDocument", QJsonObject{{"uri", uri}, {"version", it->version}}},
         {"contentChanges", QJsonArray{
-            QJsonObject{{"text", QString::fromUtf8(text)}},
+            QJsonObject{{"text", QString::fromUtf8(view->text())}},
         }},
     });
 }
@@ -383,9 +342,9 @@ void LspManager::onNotification(const QString& method, const QJsonObject& params
         LspDiagnostic d;
         d.severity = o.value("severity").toInt(1);
         if (d.severity < 1 || d.severity > 4) d.severity = 1;
-        d.startLine = unshiftLine(uri, start.value("line").toInt());
+        d.startLine = start.value("line").toInt();
         d.startChar = start.value("character").toInt();
-        d.endLine = unshiftLine(uri, end.value("line").toInt());
+        d.endLine = end.value("line").toInt();
         d.endChar = end.value("character").toInt();
         d.message = o.value("message").toString();
         d.source = o.value("source").toString();
@@ -420,7 +379,7 @@ void LspManager::requestCompletion(EditorView* view, int pos, CompletionCallback
 
     client_->request("textDocument/completion", QJsonObject{
         {"textDocument", QJsonObject{{"uri", uri}}},
-        {"position", positionJson(uri, view, pos)},
+        {"position", positionJson(view, pos)},
     },
     [this, cb = std::move(cb), uri, generation](const QJsonValue& result, const LspError* err) {
         if (err || !cb) return;
@@ -451,7 +410,7 @@ void LspManager::requestHover(EditorView* view, int pos, HoverCallback cb) {
 
     client_->request("textDocument/hover", QJsonObject{
         {"textDocument", QJsonObject{{"uri", uri}}},
-        {"position", positionJson(uri, view, pos)},
+        {"position", positionJson(view, pos)},
     },
     [this, cb = std::move(cb), uri, generation](const QJsonValue& result, const LspError* err) {
         if (err || !cb) return;
@@ -498,7 +457,7 @@ void LspManager::requestDefinition(EditorView* view, int pos, DefinitionCallback
 
     client_->request("textDocument/definition", QJsonObject{
         {"textDocument", QJsonObject{{"uri", uri}}},
-        {"position", positionJson(uri, view, pos)},
+        {"position", positionJson(view, pos)},
     },
     [this, cb = std::move(cb), uri, generation](const QJsonValue& result, const LspError* err) {
         if (!cb) return;
@@ -531,7 +490,7 @@ void LspManager::requestDefinition(EditorView* view, int pos, DefinitionCallback
         if (targetUri.isEmpty()) { cb(LspLocation{}); return; }
 
         const QJsonObject start = range.value("start").toObject();
-        cb(LspLocation{targetUri, unshiftLine(targetUri, start.value("line").toInt()),
+        cb(LspLocation{targetUri, start.value("line").toInt(),
                        start.value("character").toInt()});
     },
     kInteractiveTimeoutMs);
@@ -539,19 +498,11 @@ void LspManager::requestDefinition(EditorView* view, int pos, DefinitionCallback
 
 namespace {
 
-// `shift` is the document's DocState::lineShift -- the number of lines the text
-// the server was given has that the buffer does not. 0 for every document that
-// is not carrying a synthesized `#lang` header, which is almost all of them.
-// Threaded explicitly rather than looked up here so this stays a free function
-// and every caller has to say which document it is decoding.
-LspRange RangeFromJson(const QJsonObject& range, int shift) {
+LspRange RangeFromJson(const QJsonObject& range) {
     const QJsonObject start = range.value("start").toObject();
     const QJsonObject end = range.value("end").toObject();
-    const auto unshift = [shift](int line) { return line - shift < 0 ? 0 : line - shift; };
-    return LspRange{unshift(start.value("line").toInt()),
-                    start.value("character").toInt(),
-                    unshift(end.value("line").toInt()),
-                    end.value("character").toInt()};
+    return LspRange{start.value("line").toInt(), start.value("character").toInt(),
+                    end.value("line").toInt(), end.value("character").toInt()};
 }
 
 // Flatten one documentSymbol entry and its children into `out`.
@@ -560,8 +511,7 @@ LspRange RangeFromJson(const QJsonObject& range, int shift) {
 // spec permits nesting and also permits the older SymbolInformation shape
 // (which spells its span `location.range` and has no selectionRange). Handling
 // all three keeps a conforming server change from emptying the outline.
-void CollectSymbols(const QJsonArray& items, QVector<LspSymbol>& out,
-                    int shift) {
+void CollectSymbols(const QJsonArray& items, QVector<LspSymbol>& out) {
     for (const QJsonValue& v : items) {
         const QJsonObject o = v.toObject();
         const QString name = o.value("name").toString();
@@ -572,12 +522,12 @@ void CollectSymbols(const QJsonArray& items, QVector<LspSymbol>& out,
         sym.kind = o.value("kind").toInt();
         if (o.contains("location")) {  // SymbolInformation
             sym.range = RangeFromJson(o.value("location").toObject()
-                                          .value("range").toObject(), shift);
+                                          .value("range").toObject());
             sym.selection = sym.range;
         } else {  // DocumentSymbol
-            sym.range = RangeFromJson(o.value("range").toObject(), shift);
+            sym.range = RangeFromJson(o.value("range").toObject());
             sym.selection = o.contains("selectionRange")
-                                ? RangeFromJson(o.value("selectionRange").toObject(), shift)
+                                ? RangeFromJson(o.value("selectionRange").toObject())
                                 : sym.range;
         }
         out.append(sym);
@@ -585,7 +535,7 @@ void CollectSymbols(const QJsonArray& items, QVector<LspSymbol>& out,
         // Depth-first, so a nested symbol still lands after its parent and the
         // list stays in document order.
         if (o.contains("children")) {
-            CollectSymbols(o.value("children").toArray(), out, shift);
+            CollectSymbols(o.value("children").toArray(), out);
         }
     }
 }
@@ -603,10 +553,21 @@ void LspManager::requestSignatureHelp(EditorView* view, int pos,
     const QString uri = UriFor(view);
     const int generation = doc->generation;
 
-    // Flush a buffered edit first, exactly as completion does: asking for the
-    // signature of a call the server has not seen yet answers about the
-    // previous text, and at a `(` the user has only just typed that is the
-    // common case rather than a rare one.
+    // Flush the pending edit first, as completion does.
+    //
+    // This is NOT the flush upstream removed, and the two are easy to confuse.
+    // Upstream took signature help out of the SERVER's re-analysis group, so a
+    // request no longer forces a recompile. What this flushes is the CLIENT's
+    // debounced didChange -- and the server finds the enclosing call by reading
+    // its own copy of the document up to the cursor (`lsp_enclosing_call`), so
+    // without it the server has never seen the call the user is typing and
+    // answers null every time.
+    //
+    // Removing it was tried, on a misreading of "left the flush group", and the
+    // space-trigger test caught it: the tip came back empty on a freshly typed
+    // call. The per-space cost is now a text transfer and an index lookup
+    // rather than a full analysis, which is what makes the auto-trigger
+    // affordable at all.
     if (doc->debounce && doc->debounce->isActive()) {
         doc->debounce->stop();
         sendDidChange(uri);
@@ -614,7 +575,7 @@ void LspManager::requestSignatureHelp(EditorView* view, int pos,
 
     client_->request("textDocument/signatureHelp", QJsonObject{
         {"textDocument", QJsonObject{{"uri", uri}}},
-        {"position", positionJson(uri, view, pos)},
+        {"position", positionJson(view, pos)},
     },
     [this, cb = std::move(cb), uri, generation](const QJsonValue& result, const LspError* err) {
         if (!cb) return;
@@ -665,7 +626,7 @@ void LspManager::requestWorkspaceSymbols(const QString& query,
     }
 
     client_->request("workspace/symbol", QJsonObject{{"query", query}},
-    [this, cb = std::move(cb)](const QJsonValue& result, const LspError* err) {
+    [cb = std::move(cb)](const QJsonValue& result, const LspError* err) {
         if (!cb) return;
         if (err) { cb({}, {}); return; }
 
@@ -686,7 +647,7 @@ void LspManager::requestWorkspaceSymbols(const QString& query,
             const QJsonObject range = loc.value("range").toObject();
             const LspRange r = range.isEmpty()
                                    ? LspRange{0, 0, 0, 0}
-                                   : RangeFromJson(range, lineShiftFor(uri));
+                                   : RangeFromJson(range);
             spans.append(LspSpan{uri, r});
             names.append(name);
         }
@@ -722,7 +683,7 @@ void LspManager::requestDocumentSymbols(EditorView* view, SymbolsCallback cb) {
         if (err) { cb({}); return; }
 
         QVector<LspSymbol> symbols;
-        CollectSymbols(result.toArray(), symbols, lineShiftFor(uri));
+        CollectSymbols(result.toArray(), symbols);
         cb(symbols);
     },
     kInteractiveTimeoutMs);
@@ -746,7 +707,7 @@ void LspManager::requestDocumentHighlights(EditorView* view, int pos,
 
     client_->request("textDocument/documentHighlight", QJsonObject{
         {"textDocument", QJsonObject{{"uri", uri}}},
-        {"position", positionJson(uri, view, pos)},
+        {"position", positionJson(view, pos)},
     },
     [this, cb = std::move(cb), uri, generation](const QJsonValue& result, const LspError* err) {
         if (!cb) return;
@@ -759,8 +720,7 @@ void LspManager::requestDocumentHighlights(EditorView* view, int pos,
             // `kind` (Text/Read/Write) is deliberately dropped: an occurrence
             // is an occurrence, and painting reads and writes differently is a
             // second decoration nobody asked for.
-            ranges.append(RangeFromJson(v.toObject().value("range").toObject(),
-                                        lineShiftFor(uri)));
+            ranges.append(RangeFromJson(v.toObject().value("range").toObject()));
         }
         cb(ranges);
     },
@@ -785,7 +745,7 @@ void LspManager::requestReferences(EditorView* view, int pos, bool includeDeclar
 
     client_->request("textDocument/references", QJsonObject{
         {"textDocument", QJsonObject{{"uri", uri}}},
-        {"position", positionJson(uri, view, pos)},
+        {"position", positionJson(view, pos)},
         {"context", QJsonObject{{"includeDeclaration", includeDeclaration}}},
     },
     [this, cb = std::move(cb), uri, generation](const QJsonValue& result, const LspError* err) {
@@ -798,8 +758,7 @@ void LspManager::requestReferences(EditorView* view, int pos, bool includeDeclar
         for (const QJsonValue& v : result.toArray()) {
             const QJsonObject o = v.toObject();
             spans.append(LspSpan{o.value("uri").toString(),
-                                 RangeFromJson(o.value("range").toObject(),
-                                               lineShiftFor(o.value("uri").toString()))});
+                                 RangeFromJson(o.value("range").toObject())});
         }
         cb(spans);
     },
@@ -823,7 +782,7 @@ void LspManager::requestPrepareRename(EditorView* view, int pos, PrepareRenameCa
 
     client_->request("textDocument/prepareRename", QJsonObject{
         {"textDocument", QJsonObject{{"uri", uri}}},
-        {"position", positionJson(uri, view, pos)},
+        {"position", positionJson(view, pos)},
     },
     [this, cb = std::move(cb), uri, generation](const QJsonValue& result, const LspError* err) {
         if (!cb) return;
@@ -851,10 +810,10 @@ void LspManager::requestPrepareRename(EditorView* view, int pos, PrepareRenameCa
         // form; accept a bare range too rather than breaking on a conforming
         // change.
         if (o.contains("range")) {
-            out.range = RangeFromJson(o.value("range").toObject(), lineShiftFor(uri));
+            out.range = RangeFromJson(o.value("range").toObject());
             out.placeholder = o.value("placeholder").toString();
         } else if (o.contains("start") && o.contains("end")) {
-            out.range = RangeFromJson(o, lineShiftFor(uri));
+            out.range = RangeFromJson(o);
         } else {
             cb(out);
             return;
@@ -883,7 +842,7 @@ void LspManager::requestRename(EditorView* view, int pos, const QString& newName
 
     client_->request("textDocument/rename", QJsonObject{
         {"textDocument", QJsonObject{{"uri", uri}}},
-        {"position", positionJson(uri, view, pos)},
+        {"position", positionJson(view, pos)},
         {"newName", newName},
     },
     [this, cb = std::move(cb), uri, generation](const QJsonValue& result, const LspError* err) {
@@ -912,8 +871,7 @@ void LspManager::requestRename(EditorView* view, int pos, const QString& newName
             QVector<LspTextEdit> edits;
             for (const QJsonValue& v : it2.value().toArray()) {
                 const QJsonObject e = v.toObject();
-                edits.append(LspTextEdit{RangeFromJson(e.value("range").toObject(),
-                                                       lineShiftFor(uri)),
+                edits.append(LspTextEdit{RangeFromJson(e.value("range").toObject()),
                                          e.value("newText").toString()});
             }
             if (!edits.isEmpty()) edit.insert(it2.key(), edits);
@@ -926,8 +884,7 @@ void LspManager::requestRename(EditorView* view, int pos, const QString& newName
             QVector<LspTextEdit> edits = edit.value(docUri);
             for (const QJsonValue& ev : entry.value("edits").toArray()) {
                 const QJsonObject e = ev.toObject();
-                edits.append(LspTextEdit{RangeFromJson(e.value("range").toObject(),
-                                                       lineShiftFor(uri)),
+                edits.append(LspTextEdit{RangeFromJson(e.value("range").toObject()),
                                          e.value("newText").toString()});
             }
             if (!edits.isEmpty()) edit.insert(docUri, edits);

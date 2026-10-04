@@ -1166,7 +1166,6 @@ void HandleLangBases(MainWindow*, const QJsonObject&, const Reply& reply) {
             {"language", QString::fromLatin1(DialectLanguageName(d))},
             {"reader", QString::fromLatin1(DialectReaderName(d))},
             {"sweet", DialectIsSweet(d)},
-            {"formattable", DialectIsFormattable(d)},
         });
     }
     reply(QJsonObject{{"bases", bases}}, nullptr);
@@ -1193,6 +1192,15 @@ void HandleLangGet(MainWindow* w, const QJsonObject&, const Reply& reply) {
 // Write the active buffer's `#lang` line, which is what the picker does.
 // Deliberately NOT a UI-state setter: the reply reports whether the text
 // changed, and `lang.get` reads the answer back off the buffer.
+// The call tip currently on screen. Signature help's auto-trigger goes through
+// the editor rather than a control request, so the tip is the only place its
+// result is observable.
+void HandleEditorCallTip(MainWindow* w, const QJsonObject&, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    reply(QJsonObject{{"text", e->callTipText()}}, nullptr);
+}
+
 void HandleLangSet(MainWindow* w, const QJsonObject& args, const Reply& reply) {
     EditorView* e = RequireEditor(w, reply);
     if (!e) return;
@@ -1760,6 +1768,7 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "repl.is_running")      { HandleReplIsRunning(w, args, reply); return; }
     if (cmd == "lang.bases")           { HandleLangBases(w, args, reply); return; }
     if (cmd == "lang.get")             { HandleLangGet(w, args, reply); return; }
+    if (cmd == "editor.call_tip")      { HandleEditorCallTip(w, args, reply); return; }
     if (cmd == "lang.set")             { HandleLangSet(w, args, reply); return; }
     if (cmd == "lang.menu")            { HandleLangMenu(w, args, reply); return; }
     if (cmd == "lang.set_session")     { HandleLangSetSession(w, args, reply); return; }

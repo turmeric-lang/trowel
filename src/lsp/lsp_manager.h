@@ -202,30 +202,10 @@ private:
         int generation = 0;
         QTimer* debounce = nullptr;
         bool openOnServer = false;
-        // Lines the text sent to the server has that the buffer does not --
-        // 0 normally, 1 when a `#lang` header is synthesized for it.
-        //
-        // `tur lsp` picks its reader from the `#lang` line in the document text
-        // and ignores the file extension, where the COMPILER honours the
-        // extension. So a headerless `.scm` or `.tur.sweet` file -- the
-        // idiomatic way to write either -- is analysed as Turmeric: bogus
-        // errors on every line and no symbols at all. Reported upstream as
-        // `lsp-ignores-the-file-extension`.
-        //
-        // Until that lands, such a document is sent with the header it implies
-        // prepended, and every line number is shifted back across the boundary.
-        // Delete this field, shiftedText(), and the two shift helpers together
-        // with the report.
-        int lineShift = 0;
     };
 
-    // The text to send for `uri`, and the line shift that comes with it.
-    QByteArray shiftedText(EditorView* view, int& shiftOut) const;
-    // Outgoing: a buffer position as the server's line/character.
-    QJsonObject positionJson(const QString& uri, EditorView* view, int pos) const;
-    // Incoming: a server line as the buffer's.
-    int unshiftLine(const QString& uri, int line) const;
-    int lineShiftFor(const QString& uri) const;
+    // A buffer position as the server's line/character.
+    QJsonObject positionJson(EditorView* view, int pos) const;
 
     bool ensureStarted();
     void setState(State s, const QString& error = {});

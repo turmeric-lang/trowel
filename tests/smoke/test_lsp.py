@@ -239,17 +239,18 @@ def test_completion_list_with_a_question_mark_name_does_not_abort(
 
 # --- headerless dialect files ----------------------------------------------
 #
-# `tur lsp` picks its reader from the `#lang` line in the document text and
-# ignores the file extension, where the COMPILER honours the extension. So a
-# headerless `.scm` or `.tur.sweet` file -- the idiomatic way to write either --
-# was analysed as Turmeric: bogus errors on every line and no symbols at all.
-# Reported upstream as `docs/upstream/lsp-ignores-the-file-extension.md`;
-# LspManager::shiftedText sends such a document with the header it implies
-# prepended and shifts every line number back across the boundary.
+# `tur lsp` used to pick its reader from the `#lang` line only and ignore the
+# file extension, where the COMPILER honours the extension -- so a headerless
+# `.scm` or `.tur.sweet`, the idiomatic way to write either, was analysed as
+# Turmeric: bogus errors on every line and no symbols at all. Filed as
+# `docs/upstream/lsp-ignores-the-file-extension.md` and fixed in v0.61.0 (the
+# scratch file the server analyses now takes the document's suffix, which is
+# where the `.tur` was coming from).
 #
-# When upstream fixes this, these tests should still pass -- the synthesized
-# header becomes redundant rather than wrong. What they are really pinning is
-# that the editor does not show errors in a file that compiles.
+# Trowel's own workaround -- prepending the implied header and shifting every
+# line number back -- is gone with it. These tests are unchanged by that, which
+# is the point: what they pin is that the editor shows no errors in a file that
+# compiles, whoever is responsible for getting the reader right.
 
 
 def test_a_headerless_scheme_file_has_no_diagnostics(trowel, fixture_files: Path):
@@ -289,9 +290,11 @@ def test_a_headerless_sweet_file_has_no_diagnostics(trowel, fixture_files: Path)
 
 def test_a_file_that_already_has_a_lang_line_is_sent_unchanged(
         trowel, tmp_path: Path):
-    """No second header, and no shift. A buffer that gains a `#lang` line while
-    open must stop getting the synthesized one -- otherwise it carries two and
-    every line is off by one.
+    """A file that carries its own `#lang` line is analysed by it, and its
+    symbols land on the buffer's own lines.
+
+    This was the no-double-header case while Trowel synthesized one; it stays
+    because the line numbers are the part worth pinning either way.
     """
     _require_server(trowel)
     src = tmp_path / "hdr.scm"
@@ -381,3 +384,25 @@ def test_workspace_symbols_reports_no_matches_rather_than_hanging(trowel,
                     {"query": "zzz-no-such-symbol-anywhere", "timeout_ms": WAIT_MS})
     assert r["count"] == 0, r
     assert r["reason"], r
+
+
+def test_signature_help_auto_triggers_on_space(trowel, fixture_files: Path):
+    """Space is the server's trigger character as of v0.61.0, and Trowel now
+    fires on it from `charAdded`.
+
+    It used to advertise `(` and answer null there -- in a lisp the callee is
+    typed AFTER the paren, so there is nothing to describe yet. Asserted through
+    the call TIP rather than a control request, because the auto-trigger path
+    goes through the editor and the tip is what the user sees.
+    """
+    _require_server(trowel)
+    _open_and_analyze(trowel, fixture_files / "symbols.tur")
+
+    # Type a fresh call. The space after the callee is the trigger.
+    text = trowel.call("editor.get_text")["text"]
+    trowel.call("editor.set_cursor", {"pos": len(text.encode("utf-8"))})
+    trowel.type("\n(nav-double ")
+    trowel.wait_idle(quiet_ms=600, timeout_ms=8000)
+
+    tip = trowel.call("editor.call_tip")["text"]
+    assert "nav-double" in tip, f"no signature tip after the trigger space: {tip!r}"

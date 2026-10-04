@@ -50,8 +50,9 @@ enum class DialectLanguage : int {
 };
 
 // The token a `#lang` line spells for this dialect: "turmeric", "saffron/sweet",
-// "r7rs/sweet", and so on. Also exactly what `tur repl --lang` accepts -- but
-// NOT what `tur fmt --lang` accepts; see DialectFmtLangFlag.
+// "r7rs/sweet", and so on. Also exactly what both `tur repl --lang` and
+// `tur fmt --lang` accept, as of v0.61.0 -- see DialectFmtLangFlag for what
+// that used to cost.
 const char* DialectBaseToken(Dialect d);
 
 // "turmeric" | "saffron" | "r7rs", and the reader half unqualified
@@ -71,31 +72,24 @@ DialectLanguage LanguageOf(Dialect d);
 Language HighlightLanguageFor(Dialect d);
 
 // True for the three sweet readers. Sweet-expressions are indentation
-// sensitive, which is what makes auto-indent load-bearing and what makes
-// `tur fmt` lossy on them (see DialectFmtLangFlag).
+// sensitive, which is what makes auto-indent load-bearing.
+//
+// It used to gate Format File too: `tur fmt` reprinted a sweet buffer as
+// s-expressions, so `DialectIsFormattable` declined the two Turmeric sweet
+// bases. v0.61.0 keeps all three as written, so that guard is gone and this is
+// back to being purely about indentation.
 bool DialectIsSweet(Dialect d);
 
-// The value to pass `tur fmt --stdin --lang`.
+// The value to pass `tur fmt --stdin --lang` -- the base token, same as
+// `tur repl --lang` and same as the `#lang` line.
 //
-// THIS IS A READER SPELLING, NOT A BASE TOKEN, and that is a real trap rather
-// than an inconsistency in this file: the two `--lang` flags on the same binary
-// take different vocabularies. `tur repl --lang` wants a base and rejects
-// `sweet-exp`/`scheme`; `tur fmt --lang` wants a reader and rejects
-// `saffron`/`saffron/sweet`/`scheme`. Measured against v0.60.1, both ways
-// round. So a Saffron buffer formats under its READER's spelling, which is
-// correct -- formatting is a reader concern and Saffron's reader is Turmeric's.
-const char* DialectFmtLangFlag(Dialect d);
-
-// Whether `tur fmt` can format this dialect without rewriting it into another
-// syntax.
-//
-// False for `turmeric/sweet` and `saffron/sweet`: `tur fmt --lang sweet`
-// reprints a sweet buffer as s-expressions and leaves any `#lang .../sweet`
-// header in place, so the result is a file whose header contradicts its body.
-// `r7rs/sweet` is checked and returned verbatim, which is what the other two
-// should do. Measured against v0.60.1; reported upstream as
-// `fmt-reprints-sweet-as-s-expressions`.
-bool DialectIsFormattable(Dialect d);
+// These used to be two different vocabularies: `tur repl --lang` wanted a base
+// and rejected reader spellings, while `tur fmt --lang` wanted a reader and
+// rejected `saffron`/`saffron/sweet`, so a caller reading `tur dialects` could
+// not feed four of its ten rows to the formatter. Both flags fall back to
+// `lang_base_lookup` as of v0.61.0, so one spelling serves both and this is
+// kept only as a named seam -- verified against v0.61.0 for all ten bases.
+inline const char* DialectFmtLangFlag(Dialect d) { return DialectBaseToken(d); }
 
 // The extension a scratch copy of such a buffer must be written under, so that
 // `tur` picks the right reader off the name. Mirrors

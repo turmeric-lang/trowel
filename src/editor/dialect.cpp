@@ -16,13 +16,12 @@ struct Row {
     const char*     readerName;
     Language        highlight;
     bool            sweet;
-    const char*     fmtLang;     // `tur fmt --lang` -- a READER spelling
     const char*     scratchExt;
 };
 
 // One row per legal (language, reader) pair, in `tur dialects` order.
 //
-// Verified against the pinned v0.60.1 with `tur dialects --json`:
+// Verified against the pinned v0.61.0 with `tur dialects --json`:
 //
 //   turmeric              turmeric  s-expr       stable
 //   turmeric/curly-infix  turmeric  curly-infix  stable
@@ -39,27 +38,27 @@ struct Row {
 // there is nothing to enable and no lifecycle warning to suppress.
 constexpr Row kRows[] = {
     { Dialect::Turmeric,           "turmeric",             DialectLanguage::Turmeric,
-      "turmeric", "s-expr",      Language::Turmeric,      false, "turmeric",    ".tur" },
+      "turmeric", "s-expr",      Language::Turmeric,      false, ".tur"       },
     { Dialect::TurmericCurlyInfix, "turmeric/curly-infix", DialectLanguage::Turmeric,
-      "turmeric", "curly-infix", Language::Turmeric,      false, "curly-infix", ".tur" },
+      "turmeric", "curly-infix", Language::Turmeric,      false, ".tur"       },
     { Dialect::TurmericNeoteric,   "turmeric/neoteric",    DialectLanguage::Turmeric,
-      "turmeric", "neoteric",    Language::Turmeric,      false, "neoteric",    ".tur" },
+      "turmeric", "neoteric",    Language::Turmeric,      false, ".tur"       },
     { Dialect::TurmericSweet,      "turmeric/sweet",       DialectLanguage::Turmeric,
-      "turmeric", "sweet",       Language::TurmericSweet, true,  "sweet",       ".tur.sweet" },
+      "turmeric", "sweet",       Language::TurmericSweet, true,  ".tur.sweet" },
     { Dialect::Saffron,            "saffron",              DialectLanguage::Saffron,
-      "saffron",  "s-expr",      Language::Turmeric,      false, "turmeric",    ".tur" },
+      "saffron",  "s-expr",      Language::Turmeric,      false, ".tur"       },
     { Dialect::SaffronCurlyInfix,  "saffron/curly-infix",  DialectLanguage::Saffron,
-      "saffron",  "curly-infix", Language::Turmeric,      false, "curly-infix", ".tur" },
+      "saffron",  "curly-infix", Language::Turmeric,      false, ".tur"       },
     { Dialect::SaffronNeoteric,    "saffron/neoteric",     DialectLanguage::Saffron,
-      "saffron",  "neoteric",    Language::Turmeric,      false, "neoteric",    ".tur" },
+      "saffron",  "neoteric",    Language::Turmeric,      false, ".tur"       },
     { Dialect::SaffronSweet,       "saffron/sweet",        DialectLanguage::Saffron,
-      "saffron",  "sweet",       Language::TurmericSweet, true,  "sweet",       ".tur.sweet" },
+      "saffron",  "sweet",       Language::TurmericSweet, true,  ".tur.sweet" },
     { Dialect::R7rs,               "r7rs",                 DialectLanguage::R7rs,
-      "r7rs",     "scheme",      Language::R7rs,          false, "r7rs",        ".scm" },
+      "r7rs",     "scheme",      Language::R7rs,          false, ".scm"       },
     // No extension selects `r7rs/sweet` upstream, so a scratch copy goes out as
     // `.tur` and carries its `#lang` line. See DialectScratchExtension.
     { Dialect::R7rsSweet,          "r7rs/sweet",           DialectLanguage::R7rs,
-      "r7rs",     "sweet",       Language::R7rsSweet,     true,  "r7rs/sweet",  ".tur" },
+      "r7rs",     "sweet",       Language::R7rsSweet,     true,  ".tur"       },
 };
 
 static_assert(sizeof(kRows) / sizeof(kRows[0]) == static_cast<size_t>(Dialect::Count),
@@ -81,13 +80,7 @@ const char* DialectReaderName(Dialect d)    { return RowFor(d).readerName; }
 DialectLanguage LanguageOf(Dialect d)       { return RowFor(d).language; }
 Language HighlightLanguageFor(Dialect d)    { return RowFor(d).highlight; }
 bool DialectIsSweet(Dialect d)              { return RowFor(d).sweet; }
-const char* DialectFmtLangFlag(Dialect d)   { return RowFor(d).fmtLang; }
 const char* DialectScratchExtension(Dialect d) { return RowFor(d).scratchExt; }
-
-bool DialectIsFormattable(Dialect d) {
-    // `r7rs/sweet` is the one sweet reader `tur fmt` keeps as written.
-    return !DialectIsSweet(d) || d == Dialect::R7rsSweet;
-}
 
 bool DialectNeedsSessionSwitch(Dialect session, Dialect buffer) {
     return LanguageOf(session) != LanguageOf(buffer);

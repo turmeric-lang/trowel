@@ -1,9 +1,26 @@
 # Saffron, R7RS, and the `#lang` dialect axis
 
-> **Status:** Parts A–G and I executed 2026-10-03, against Trowel `0943d95`
-> and Turmeric `v0.60.1`. Part H remains deferred by design (it is two separate
-> plans). Per-part notes are inline below; the work is in the tree,
-> uncommitted.
+> **Status:** Parts A–G and I executed 2026-10-03, against Trowel `0943d95`.
+> Part H remains deferred by design (it is two separate plans). Per-part notes
+> are inline below; the work is in the tree, uncommitted.
+>
+> **Pin now `v0.61.0`, and three of the four workarounds are gone.** All six
+> reports from Part I were filed as turmeric-lang/turmeric#1063 (merged) and
+> fixed in #1064, released as `v0.61.0`. Each fix was re-verified here against
+> the newly pinned binary before the matching workaround was deleted:
+>
+> | Was | Now |
+> |---|---|
+> | `LspManager::shiftedText` + a per-document line shift threaded through 7 outgoing positions and 10 incoming decodes | **deleted.** Headerless `.scm` → 0 diagnostics, symbols `f`/`main`; headerless `.tur.sweet` → 0 diagnostics, symbol `double`; the `.tur` control still reports. The `.tur` the server saw came from its own scratch file, which now takes the document's suffix. |
+> | `DialectIsFormattable`, declining Format File for the two Turmeric sweet bases | **deleted.** `tur fmt` parse-checks sweet and keeps the body as written. |
+> | `DialectFmtLangFlag` as a separate reader vocabulary | **collapsed to `DialectBaseToken`.** Both `--lang` flags accept every one of the ten bases; verified for all ten. |
+> | Signature help explicit-only, with a client-side flush | **auto-triggers on space**, flush removed. The server's trigger is `" "` and it left its own flush group. |
+>
+> **Two of my six reports were misdiagnosed**, both corrected upstream and
+> recorded in `docs/upstream/README.md`: `:run` never dropped a sweet file's
+> definitions (I read `(cancelled)` as "unbound"; the session reader had become
+> sweet and a bare symbol was an incomplete expression), and "answer at the `(`"
+> could not work because in a lisp the callee is typed after the paren.
 >
 > Two things found during execution that were not in the plan as written, both
 > now fixed: the staging step never cleared, so the bundle carried a **v0.42.2
@@ -704,9 +721,10 @@ either way. Part G already adds the client plumbing.
 > for two code paths that must stay byte-identical. Not worth it; recorded here
 > so it reads as a decision rather than an omission.
 >
-> G2 is position-encoding negotiation. G3 is the synthesized-header workaround,
-> with the line shift threaded through all 7 outgoing positions and all 10
-> incoming range decodes.
+> G2 is position-encoding negotiation. G3 WAS the synthesized-header
+> workaround; it is deleted now that v0.61.0 resolves the reader from the
+> document's own suffix. G1's two capabilities stay, and signature help gained
+> the space auto-trigger the fix made affordable.
 >
 > A gap the plan missed: `LspManager::UriFor` gated eligibility on
 > `Language::Turmeric || TurmericSweet`, making it a **third** place the set of

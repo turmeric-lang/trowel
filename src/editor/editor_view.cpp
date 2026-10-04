@@ -206,18 +206,17 @@ EditorView::EditorView(QWidget* parent)
     connect(sci_, &ScintillaEditBase::charAdded, this, [this](int ch) {
         if (ch == '\n') autoIndentAfterNewline();
         if (ch == '(') emit completionRequested(cursorPos());
-        // Signature help is NOT auto-triggered, though the server advertises
-        // `(` as its trigger character. Measured against v0.60.1 on
-        // `(nav-double nav-total)`: the server answers `null` at the `(` and
-        // `null` immediately after the callee's name, and only returns a
-        // signature once the cursor is in ARGUMENT position (past the name and
-        // a space). So a request on `(` is a guaranteed miss, and the one
-        // position that would work is after a space -- which in a lisp is most
-        // keystrokes, each costing a didChange plus a compile on the server's
-        // single thread (the same cost that keeps completion off space).
+        // Signature help auto-triggers on SPACE, which is the server's own
+        // trigger character as of v0.61.0.
         //
-        // Hence: explicit only, via Run > Show Signature Help. Reported
-        // upstream as `signature-help-declines-at-its-own-trigger-character`.
+        // It used to advertise `(` and answer `null` there -- in a lisp the
+        // callee is typed AFTER the paren, so there was nothing to describe yet.
+        // The trigger moved to `" "`, which is the first moment a callee is
+        // behind the cursor, and upstream took signature help out of the
+        // server's re-analysis group -- so a space now costs a document sync
+        // and an index lookup rather than a full recompile. That recompile is
+        // what kept this explicit-only against v0.60.1.
+        if (ch == ' ') emit signatureHelpRequested(cursorPos());
     });
 
     connect(sci_, &ScintillaEditBase::dwellStart, this, [this](int x, int y) {

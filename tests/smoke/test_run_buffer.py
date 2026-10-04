@@ -55,26 +55,24 @@ def test_run_dirty_sweet_buffer_keeps_sweet_extension(trowel, fixture_files: Pat
     assert "sweet dirty ran" in hit["matched"]
 
 
-def test_run_sweet_buffer_does_not_leave_its_definitions_behind(
+def test_run_sweet_buffer_leaves_its_definitions_in_the_session(
         trowel, fixture_files: Path):
-    """Upstream gap, pinned so a fix is noticed: `:run` on a file whose reader
-    came from its EXTENSION invokes `main` but does not leave the file's
-    top-level definitions in the session, where the same `:run` on a `.tur`
-    file does (test_run_buffer_loads_definitions covers that side).
+    """`:run` on a sweet file leaves its definitions behind, same as a `.tur`.
 
-    Measured against the bundled v0.60.1. Reported upstream as
-    `run-on-sweet-file-drops-its-definitions`. When this test starts failing,
-    upstream has fixed it -- delete the test, not the assertion.
+    Asserted with a COMPLETE sweet expression. A bare `sweet-main-x` does not
+    answer here, and reading that as "the definition is missing" is exactly the
+    mistake the test this replaced was built on -- see the next test for what is
+    actually going on.
     """
     trowel.wait_output("turmeric>", timeout_ms=5000)
     trowel.call("editor.open", {"path": str(fixture_files / "sweet_main.tur.sweet")})
     trowel.call("run.buffer")
     trowel.wait_output("sweet main ran", timeout_ms=8000)
     trowel.wait_idle(quiet_ms=400, timeout_ms=5000)
-    trowel.send("sweet-main-x")
-    trowel.wait_idle(quiet_ms=400, timeout_ms=5000)
-    screen = trowel.call("repl.get_screen", {"lines": 40})["text"]
-    assert "=> 7" not in screen, screen
+
+    trowel.send("(+ sweet-main-x 1)")
+    hit = trowel.wait_output("=> 8", timeout_ms=8000)
+    assert "=> 8" in hit["matched"]
 
 
 def test_run_selection_keeps_the_lang_directive(trowel, tmp_path: Path):

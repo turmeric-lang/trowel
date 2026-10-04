@@ -1992,35 +1992,13 @@ void MainWindow::formatFile() {
 
     const Dialect dialect = v->dialect();
 
-    // Decline the two sweet bases rather than rewriting the buffer into another
-    // syntax. Measured against the pinned v0.60.1 on one two-function program:
+    // `tur fmt --stdin`, not `tur format`. Without a dialect a Scheme buffer
+    // formats to different bytes: `(define (f x)\n(* x 2))` comes back collapsed
+    // onto one line with a blank inserted, where `--lang r7rs` re-indents it.
     //
-    //   tur format              -- shreds it: one token per line, blank-separated
-    //   tur fmt --lang sweet    -- reprints it as S-EXPRESSIONS, and keeps any
-    //                              `#lang turmeric/sweet` header, so the result
-    //                              is a file whose header contradicts its body
-    //   tur fmt --lang r7rs/sweet -- returns it verbatim (checked, kept as
-    //                              written), which is what the other two should do
-    //
-    // So `r7rs/sweet` goes through and the other two do not. Reported upstream
-    // as `fmt-reprints-sweet-as-s-expressions`; when that lands, this guard and
-    // DialectIsFormattable go together.
-    if (!DialectIsFormattable(dialect)) {
-        statusBar()->showMessage(
-            QString("`tur fmt` reprints %1 as s-expressions; formatting is "
-                    "disabled for this dialect.").arg(DialectBaseToken(dialect)),
-            6000);
-        return;
-    }
-
-    // `tur fmt --stdin`, not `tur format`. The older entry point takes no
-    // dialect, and without one a Scheme buffer formats to different bytes:
-    // `(define (f x)\n(* x 2))` comes back collapsed onto one line with a blank
-    // inserted, where `--lang r7rs` re-indents it correctly.
-    //
-    // NOTE the vocabulary: `tur fmt --lang` wants a READER spelling and rejects
-    // `saffron`, while `tur repl --lang` wants a BASE and rejects `sweet-exp`.
-    // DialectFmtLangFlag is the one that belongs here.
+    // Every dialect goes through, the three sweet readers included: v0.61.0
+    // parse-checks a sweet buffer and keeps it as written, where v0.60.1
+    // reprinted the two Turmeric ones as s-expressions and had to be declined.
     const QStringList args{"fmt", "--stdin", "--lang", DialectFmtLangFlag(dialect)};
     QProcess proc;
     proc.start(binary, args);

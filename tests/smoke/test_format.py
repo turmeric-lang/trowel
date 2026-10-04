@@ -46,18 +46,32 @@ def test_a_turmeric_buffer_still_formats(trowel, tur_binary, tmp_path: Path):
     assert got == tur_fmt(tur_binary, body, "turmeric"), got
 
 
-def test_a_sweet_buffer_is_left_exactly_as_written(trowel, tmp_path: Path):
-    """`tur fmt --lang sweet` reprints sweet-expressions as s-expressions and
-    keeps the `#lang turmeric/sweet` header, which would leave a file whose
-    header contradicts its body. Asserted on the BYTES, not on the message --
-    the bytes are the bug.
+def test_a_sweet_buffer_keeps_its_sweet_body(trowel, tur_binary, tmp_path: Path):
+    """A sweet buffer formats, and comes back still sweet.
+
+    Against v0.60.1 `tur fmt` reprinted sweet as s-expressions while keeping the
+    `#lang .../sweet` header, so Trowel DECLINED to format the two Turmeric
+    sweet bases rather than rewrite the buffer into another syntax. v0.61.0
+    parse-checks and keeps the body as written, so the guard is gone and this
+    now asserts the formatting rather than the refusal.
+
+    Not byte-identical to the input: the header survives and the blank line
+    after it is dropped. So this asserts the TOOLCHAIN's own answer plus the
+    surviving sweet body, rather than equality with the input -- measured, after
+    an earlier version of this assertion failed on exactly that blank line.
     """
     src = tmp_path / "fmt.tur.sweet"
     body = "#lang turmeric/sweet\n\ndefn double [x]\n  {x * 2}\n"
     src.write_text(body)
     trowel.call("editor.open", {"path": str(src)})
     trowel.call("menu.invoke", {"path": FORMAT})
-    assert trowel.call("editor.get_text")["text"] == body
+
+    got = trowel.call("editor.get_text")["text"]
+    assert got == tur_fmt(tur_binary, body, "turmeric/sweet"), got
+    # Still sweet: indentation-carried body, no parens added around the defn.
+    assert "defn double [x]" in got, got
+    assert "  {x * 2}" in got, got
+    assert "(defn double" not in got, got
 
 
 def test_r7rs_sweet_is_allowed_through_and_keeps_its_body(

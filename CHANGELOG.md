@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- New releases are inserted immediately below this comment. -->
 
+## [0.3.2] -- 2026-10-04
+
+### Fixed
+- **Linux AppImages build again**, for the first time since v0.2.1. Every
+  AppImage leg has failed since v0.3.0 on both architectures: the build asked
+  `ldd` about `turmeric/tur`, and `tur` has not been at that path since
+  Turmeric v0.47.0 moved the released archives to a prefix layout
+  (`bin/tur`, `lib/`, `share/`). v0.3.0 is the release whose pin crossed that
+  boundary. Under `set -euo pipefail` the failing `ldd` ended the script with
+  no message at all -- `2>/dev/null` discarded the only one -- and in the log
+  it read as a failure of the tool download several statements earlier. Both
+  archive layouts are probed now, and a missing `tur` degrades to the warning
+  that already existed for it.
+
 ## [0.3.1] -- 2026-10-04
 
 ### Changed

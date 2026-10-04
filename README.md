@@ -5,7 +5,7 @@ programming language, for macOS and Linux.
 
 <img src="docs/images/screenshot.png" alt="Trowel editing a Turmeric source file" width="400">
 
-**Latest release:** `v0.3.1` — Turmeric v0.62.0 with dependency errors traced through `load` chains, and a diagnosable AppImage build.
+**Latest release:** `v0.3.2` — Linux AppImages build again, for the first time since v0.2.1.
 
 ## Install
 

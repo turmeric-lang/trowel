@@ -19,6 +19,14 @@ namespace trowel {
 
 namespace {
 
+LspRange RangeFromJson(const QJsonObject& range) {
+    const QJsonObject start = range.value("start").toObject();
+    const QJsonObject end = range.value("end").toObject();
+    return LspRange{start.value("line").toInt(), start.value("character").toInt(),
+                    end.value("line").toInt(), end.value("character").toInt()};
+}
+
+
 // The server recompiles the whole buffer on every didChange, inline on its
 // single thread. Coalesce keystrokes so a fast typist doesn't queue a compile
 // per character.
@@ -177,7 +185,12 @@ bool LspManager::ensureStarted() {
                 {"synchronization", QJsonObject{{"dynamicRegistration", false}}},
                 {"hover", QJsonObject{{"contentFormat", QJsonArray{"markdown", "plaintext"}}}},
                 {"completion", QJsonObject{{"dynamicRegistration", false}}},
-                {"publishDiagnostics", QJsonObject{{"relatedInformation", false}}},
+                // relatedInformation: true, because a dependency error's only
+                // actionable part arrives in it. Declaring false -- which this
+                // did -- tells the server the client cannot use the note, and
+                // Trowel then had no way to offer a jump to the real error
+                // site inside a `load`ed file.
+                {"publishDiagnostics", QJsonObject{{"relatedInformation", true}}},
             }},
         }},
     };
@@ -348,6 +361,15 @@ void LspManager::onNotification(const QString& method, const QJsonObject& params
         d.endChar = end.value("character").toInt();
         d.message = o.value("message").toString();
         d.source = o.value("source").toString();
+
+        for (const QJsonValue& rv : o.value("relatedInformation").toArray()) {
+            const QJsonObject ro = rv.toObject();
+            const QJsonObject loc = ro.value("location").toObject();
+            const QString relUri = loc.value("uri").toString();
+            if (relUri.isEmpty()) continue;
+            d.related.append(LspSpan{relUri, RangeFromJson(loc.value("range").toObject())});
+            d.relatedMessages.append(ro.value("message").toString());
+        }
         out.append(d);
     }
 
@@ -497,13 +519,6 @@ void LspManager::requestDefinition(EditorView* view, int pos, DefinitionCallback
 }
 
 namespace {
-
-LspRange RangeFromJson(const QJsonObject& range) {
-    const QJsonObject start = range.value("start").toObject();
-    const QJsonObject end = range.value("end").toObject();
-    return LspRange{start.value("line").toInt(), start.value("character").toInt(),
-                    end.value("line").toInt(), end.value("character").toInt()};
-}
 
 // Flatten one documentSymbol entry and its children into `out`.
 //

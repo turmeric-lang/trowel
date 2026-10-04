@@ -99,6 +99,7 @@ public slots:
     // Public because the control API drives it directly rather than through the
     // menu: it has to connect to definitionJumpFinished before the request goes
     // out, which menu.invoke gives it no chance to do.
+    void goToDiagnosticSource();
     void goToDefinition();
     // Record an execution trace of the active buffer with `tur trace`.
     void traceBuffer();
@@ -364,6 +365,7 @@ private:
     QAction* completeAction_ = nullptr;
     QAction* showDocAction_ = nullptr;
     QAction* gotoDefinitionAction_ = nullptr;
+    QAction* diagnosticSourceAction_ = nullptr;
     QAction* outlineAction_ = nullptr;
     QAction* signatureHelpAction_ = nullptr;
     QMenu* dialectMenu_ = nullptr;

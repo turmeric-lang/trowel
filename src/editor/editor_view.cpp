@@ -950,11 +950,16 @@ bool EditorView::eventFilter(QObject* watched, QEvent* event) {
 }
 
 QString EditorView::diagnosticMessageAt(int pos) const {
+    const LspDiagnostic* d = diagnosticAt(pos);
+    return d ? d->message : QString();
+}
+
+const LspDiagnostic* EditorView::diagnosticAt(int pos) const {
     for (const LspDiagnostic& d : diagnostics_) {
         const auto [start, end] = rangeForDiagnostic(d);
-        if (pos >= start && pos <= end) return d.message;
+        if (pos >= start && pos <= end) return &d;
     }
-    return {};
+    return nullptr;
 }
 
 void EditorView::showCompletions(const QStringList& labels, int lengthEntered) {

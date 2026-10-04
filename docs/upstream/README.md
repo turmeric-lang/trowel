@@ -65,10 +65,70 @@ rather than on the fix being reported, because three of these workarounds
 originally outlived their bugs by several releases. See the status block in
 `docs/plans/dialects-saffron-and-r7rs.md` for the per-item evidence.
 
-**Still open upstream, and live:**
-`lsp-publishes-other-files-diagnostics-under-one-uri` — a loaded file's error is
-drawn on the open buffer. Trowel keys diagnostics by the published URI, so it
-inherits this. A client-side filter on the non-standard `"file"` key would hide
-it; not added, because that is a fresh workaround for a report that is already
-filed and being worked, and this effort has just finished deleting three of
-those.
+## A diagnostic on the `(load ...)` line is correct, not a bug
+
+I got this one wrong twice, so it is worth stating plainly.
+
+I filed the "secondary observation" in the LSP report as a latent bug: a
+`publishDiagnostics` carrying another file's diagnostics under the open
+document's URI. Upstream filed it as
+`lsp-publishes-other-files-diagnostics-under-one-uri`, and I then "reproduced"
+it against v0.61.0 and reported it as live.
+
+**It was not the bug. It was the fix.** `tur lsp` analyses one document at a
+time, so each analysis owns only that document's diagnostics, and `load` is
+textual inclusion. The model is clangd's: an error from an included header is
+shown on the `#include` line ("In included file: ...") with a note pointing into
+the header. v0.61.0 does exactly that:
+
+- the range is on the `"b.tur"` STRING in the load form (column 6), not at
+  b.tur's own column (19), which is what the old bug used;
+- `relatedInformation` points at b.tur's URI and the real span;
+- the message is prefixed `in b.tur:1:20:`.
+
+My probe printed only the line, the `file` key and the message — and both the
+bug and the fix land on line 0 in my repro, so it could not tell them apart.
+The discriminating evidence (the message prefix) was in my own output and I
+read past it. The mistake was not insufficient caution; it was checking against
+"is there a diagnostic on a.tur", which BOTH outcomes satisfy. Decide what
+would distinguish the two BEFORE running the probe.
+
+Two shapes I proposed as the "correct fix" are both wrong, for reasons worth
+keeping: publishing under b.tur's URI would have a.tur's analysis and b.tur's
+own analysis overwriting each other's diagnostics whenever both are open (that
+shape belongs to whole-project servers like rust-analyzer or gopls); and
+sending nothing for a.tur would show it clean while it loads code that does not
+compile.
+
+**Do not filter on the `file` key** — that hides a real error in the load.
+
+### What Trowel does now — done
+
+Rendered as an error in a DEPENDENCY, with the related location as a jump:
+
+1. `initialize` declares `relatedInformation: true`. It declared **false**, so
+   Trowel was telling the server it could not use the note — and the server's
+   one actionable field went unsent and unread.
+2. `LspDiagnostic` carries `related` (the spans) and `relatedMessages`
+   (the server's note per span), plus `isFromDependency()`.
+3. The status bar prefixes such a diagnostic
+   `Error in a dependency — in b.tur:1:24: … (Shift+F12 to open it)`, and
+   **Run > Go to Diagnostic Source** (Shift+F12) jumps to the real site through
+   the existing `jumpToSpan` and nav history. Its own action rather than a case
+   inside Go to Definition: F12 sometimes meaning "jump to an error in another
+   file" would be a surprise, and the two have different preconditions.
+
+Four smoke tests in `test_lsp.py`. Note what they had to work around: a
+RELATIVE `(load "b.tur")` under `tur lsp` resolves against the server's scratch
+directory, so it fails `load: cannot open ...` and never reaches the dependency
+case — the other open report,
+`lsp-relative-load-resolves-against-scratch-dir`. The first draft of these
+tests used a relative load and one of them **passed anyway**, asserting a
+"cannot open" diagnostic while claiming to test a dependency error. They now
+load by absolute path and assert the `in <file>:<line>:<col>:` prefix first, so
+they cannot pass on the wrong diagnostic.
+
+Upstream notes one gap still to come: a file loaded BY a loaded file falls back
+to line 0 of the open document, and a follow-up will move it onto the open
+document's own load line and add `(via mid.tur)` to the message. Trowel needs
+no change for that — it renders whatever range and related location arrive.

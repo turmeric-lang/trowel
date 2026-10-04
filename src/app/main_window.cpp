@@ -60,6 +60,14 @@
 namespace trowel {
 
 namespace {
+
+// The shortcut for Go to Diagnostic Source, named once because the status-bar
+// framing for a dependency error quotes it -- a hint that spells a different
+// key than the menu does is worse than no hint.
+//
+// Shift+F12 rather than something near F12: it reads as "the other F12 jump",
+// and F12 itself is Go to Definition.
+constexpr const char* kGoToDiagnosticSourceShortcut = "Shift+F12";
 // Depth of the Back stack. Deep enough that a normal exploration session never
 // hits it, shallow enough that it stays a navigation aid rather than a log.
 constexpr int kNavHistoryMax = 20;
@@ -414,6 +422,14 @@ void MainWindow::setupMenus() {
     connect(workspaceSymbolAction_, &QAction::triggered, this,
             &MainWindow::findSymbolInProject);
     runMenu->addAction(workspaceSymbolAction_);
+
+    diagnosticSourceAction_ = new QAction("Go to Diagnostic &Source", this);
+    diagnosticSourceAction_->setShortcut(QKeySequence(kGoToDiagnosticSourceShortcut));
+    diagnosticSourceAction_->setToolTip(
+        "Open the code a dependency error came from");
+    connect(diagnosticSourceAction_, &QAction::triggered, this,
+            &MainWindow::goToDiagnosticSource);
+    runMenu->addAction(diagnosticSourceAction_);
 
     gotoDefinitionAction_ = new QAction("&Go to Definition", this);
     gotoDefinitionAction_->setShortcut(QKeySequence("F12"));
@@ -2055,6 +2071,36 @@ void MainWindow::showDocumentation() {
     emit v->hoverRequested(v->cursorPos());
 }
 
+// Jump to the code a dependency error actually came from.
+//
+// Its own action rather than a case inside Go to Definition: F12 meaning
+// "jump to the definition of this symbol" and sometimes "jump to an error in
+// another file" would be a surprise, and the two have different preconditions
+// (a symbol under the caret vs. a diagnostic under it).
+void MainWindow::goToDiagnosticSource() {
+    EditorView* v = editorView();
+    if (!v) return;
+
+    const LspDiagnostic* d = v->diagnosticAt(v->cursorPos());
+    if (!d || d->related.isEmpty()) {
+        statusBar()->show();
+        statusBar()->showMessage(
+            d ? QStringLiteral("This diagnostic is reported where it happened")
+              : QStringLiteral("No diagnostic at the caret"),
+            4000);
+        return;
+    }
+
+    // The first related location. The server sends one for a `load` error; if a
+    // future diagnostic carries several, the first is the innermost site, which
+    // is the one worth landing on.
+    jumpToSpan(d->related.first());
+    if (!d->relatedMessages.isEmpty()) {
+        statusBar()->show();
+        statusBar()->showMessage(d->relatedMessages.first(), 6000);
+    }
+}
+
 void MainWindow::goToDefinition() {
     EditorView* v = editorView();
     if (!v) { emit definitionJumpFinished(false); return; }
@@ -2628,7 +2674,19 @@ void MainWindow::updateDiagnosticStatus() {
 
     // Prefer the diagnostic under the caret; fall back to a count so the user
     // knows something is wrong even when the caret is elsewhere.
-    QString message = v->diagnosticMessageAt(v->cursorPos());
+    QString message;
+    if (const LspDiagnostic* d = v->diagnosticAt(v->cursorPos())) {
+        message = d->message;
+        // A dependency error is drawn on the `(load "...")` form, not at the
+        // code that is actually wrong, so say so -- otherwise the squiggle
+        // reads as "this load is malformed". The message already names the
+        // real file and line; what the prefix adds is that the fault is not
+        // here, and that there is somewhere to go.
+        if (d->isFromDependency()) {
+            message = QString("Error in a dependency — %1  (%2 to open it)")
+                          .arg(message, kGoToDiagnosticSourceShortcut);
+        }
+    }
     if (message.isEmpty()) {
         int errors = 0;
         for (const LspDiagnostic& d : diagnostics) {

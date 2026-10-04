@@ -208,6 +208,11 @@ public:
     // status-bar readout as the caret moves.
     QString diagnosticMessageAt(int pos) const;
 
+    // The diagnostic whose range covers `pos`, or nullptr. Exposed so a caller
+    // can reach a diagnostic's related locations, which `diagnosticMessageAt`
+    // flattens away.
+    const LspDiagnostic* diagnosticAt(int pos) const;
+
     // --- Debugger ---
     // One breakpoint mark to paint in the gutter. `line` is 1-based; `enabled`
     // false draws a hollow marker; `pending` true (not yet verified by the

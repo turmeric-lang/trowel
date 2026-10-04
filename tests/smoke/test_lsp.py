@@ -406,3 +406,104 @@ def test_signature_help_auto_triggers_on_space(trowel, fixture_files: Path):
 
     tip = trowel.call("editor.call_tip")["text"]
     assert "nav-double" in tip, f"no signature tip after the trigger space: {tip!r}"
+
+
+# --- dependency errors (relatedInformation) --------------------------------
+#
+# `tur lsp` analyses one document at a time and `load` is textual inclusion, so
+# an error inside a loaded file is reported against the OPEN file, on its
+# `(load "...")` form -- clangd's model for an error inside an `#include`. The
+# range points at the load; the real site arrives in `relatedInformation`.
+#
+# Trowel used to declare `relatedInformation: false` and drop it, so the one
+# actionable part of such a diagnostic was lost.
+#
+# The loads below are ABSOLUTE on purpose. A relative `(load "b.tur")` under
+# `tur lsp` resolves against the server's scratch directory rather than the
+# document's, so it fails with `load: cannot open ...` and never reaches the
+# dependency case at all -- an open upstream report
+# (`lsp-relative-load-resolves-against-scratch-dir`). A first version of these
+# tests used a relative load and one of them PASSED anyway, asserting a
+# "cannot open" diagnostic while claiming to test a dependency error.
+
+
+def _dependency_pair(tmp_path: Path) -> Path:
+    """A broken file and an importer that loads it by absolute path."""
+    broken = tmp_path / "dep_broken.tur"
+    broken.write_text("(def dep-broken-thing (this-name-does-not-exist 1))\n")
+    importer = tmp_path / "dep_importer.tur"
+    importer.write_text('(load "%s")\n(def importer-ok 1)\n' % broken)
+    return importer
+
+
+def test_a_dependency_error_lands_on_the_load_form(trowel, tmp_path: Path):
+    _require_server(trowel)
+    importer = _dependency_pair(tmp_path)
+    r = _open_and_analyze(trowel, importer, min_count=1)
+    assert r["count"] >= 1, r
+
+    d = trowel.call("lsp.diagnostics")["diagnostics"][0]
+    # It is the DEPENDENCY error, not a failure to open the file: the server
+    # prefixes the real location. Asserted first, so this test cannot pass on a
+    # "cannot open" diagnostic that happens to sit on the same line.
+    assert d["message"].startswith("in "), d
+    assert "this-name-does-not-exist" in d["message"], d
+
+    # Drawn on line 0 -- the `(load ...)` -- and on the path STRING, not at
+    # column 0 and not at the dependency's own column.
+    assert d["start_line"] == 0, d
+    line0 = trowel.call("editor.get_text")["text"].split("\n")[0]
+    assert line0[d["start_char"]] == '"', (line0, d)
+
+
+def test_a_dependency_error_carries_a_jumpable_related_location(
+        trowel, tmp_path: Path):
+    """The part Trowel used to throw away. Without `relatedInformation: true`
+    in `initialize` the server sends nothing here, so this also pins the
+    capability declaration.
+    """
+    _require_server(trowel)
+    importer = _dependency_pair(tmp_path)
+    _open_and_analyze(trowel, importer, min_count=1)
+
+    d = trowel.call("lsp.diagnostics")["diagnostics"][0]
+    assert d["from_dependency"] is True, d
+    assert d["related"], d
+    rel = d["related"][0]
+    assert rel["path"].endswith("dep_broken.tur"), rel
+    assert rel["line"] == 0, rel
+    assert "this-name-does-not-exist" in rel["message"], rel
+
+
+def test_go_to_diagnostic_source_opens_the_dependency(trowel, tmp_path: Path):
+    _require_server(trowel)
+    importer = _dependency_pair(tmp_path)
+    _open_and_analyze(trowel, importer, min_count=1)
+
+    d = trowel.call("lsp.diagnostics")["diagnostics"][0]
+    trowel.call("editor.set_cursor",
+                {"line": d["start_line"], "col": d["start_char"]})
+    trowel.call("menu.invoke", {"path": ["Run", "Go to Diagnostic Source"]})
+
+    opened = trowel.call("editor.get_text")["text"]
+    assert "this-name-does-not-exist" in opened, \
+        f"did not open the dependency; buffer is {opened!r}"
+
+
+def test_go_to_diagnostic_source_declines_a_local_diagnostic(
+        trowel, fixture_files: Path):
+    """A diagnostic reported where it happened has no related location, and the
+    action must say so rather than silently doing nothing or jumping somewhere.
+    """
+    _require_server(trowel)
+    _open_and_analyze(trowel, fixture_files / "syntax_error.tur", min_count=1)
+    before = trowel.call("editor.get_text")["text"]
+
+    d = trowel.call("lsp.diagnostics")["diagnostics"][0]
+    assert d["from_dependency"] is False, d
+    trowel.call("editor.set_cursor",
+                {"line": d["start_line"], "col": d["start_char"]})
+    trowel.call("menu.invoke", {"path": ["Run", "Go to Diagnostic Source"]})
+
+    # Same buffer, no jump.
+    assert trowel.call("editor.get_text")["text"] == before

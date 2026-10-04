@@ -460,6 +460,23 @@ QJsonObject DiagnosticsToJson(const QVector<LspDiagnostic>& diagnostics) {
             {"end_char", d.endChar},
             {"message", d.message},
             {"source", d.source},
+            // A dependency error is drawn on the importer's `(load ...)` form
+            // and carries the real site in relatedInformation; both halves are
+            // reported so a test can tell the two apart.
+            {"from_dependency", d.isFromDependency()},
+            {"related", [&d] {
+                QJsonArray rel;
+                for (int i = 0; i < d.related.size(); ++i) {
+                    rel.append(QJsonObject{
+                        {"uri", d.related.at(i).uri},
+                        {"path", LspManager::PathForUri(d.related.at(i).uri)},
+                        {"line", d.related.at(i).range.startLine},
+                        {"character", d.related.at(i).range.startCharacter},
+                        {"message", d.relatedMessages.value(i)},
+                    });
+                }
+                return rel;
+            }()},
         });
     }
     QJsonObject o;

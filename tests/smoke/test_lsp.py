@@ -507,3 +507,37 @@ def test_go_to_diagnostic_source_declines_a_local_diagnostic(
 
     # Same buffer, no jump.
     assert trowel.call("editor.get_text")["text"] == before
+
+
+def test_a_dependency_error_through_a_load_chain_points_at_the_innermost_file(
+        trowel, tmp_path: Path):
+    """`top.tur` loads `mid.tur` loads `deep.tur`, and the error is in `deep`.
+
+    Turmeric v0.62.0 places such a diagnostic on the OPEN file's own load form
+    and names the intermediate hop in the message (`(via mid.tur)`), with the
+    related location pointing at the innermost file. Trowel needed no change for
+    that -- it renders whatever range and related location arrive -- and this
+    pins that, because the tempting bug is to jump to the file named in the
+    `(load ...)` the squiggle sits on rather than the one that is wrong.
+    """
+    _require_server(trowel)
+    deep = tmp_path / "deep.tur"
+    deep.write_text("(def deep-broken (this-name-does-not-exist 1))\n")
+    mid = tmp_path / "mid.tur"
+    mid.write_text('(load "%s")\n' % deep)
+    top = tmp_path / "top.tur"
+    top.write_text('(load "%s")\n(def top-ok 1)\n' % mid)
+
+    _open_and_analyze(trowel, top, min_count=1)
+    d = trowel.call("lsp.diagnostics")["diagnostics"][0]
+
+    assert "deep.tur" in d["message"], d
+    assert "via mid.tur" in d["message"], d
+    assert d["from_dependency"] is True, d
+    # The related location is the INNERMOST file, not the hop.
+    assert d["related"][0]["path"].endswith("deep.tur"), d["related"]
+
+    trowel.call("editor.set_cursor",
+                {"line": d["start_line"], "col": d["start_char"]})
+    trowel.call("menu.invoke", {"path": ["Run", "Go to Diagnostic Source"]})
+    assert "this-name-does-not-exist" in trowel.call("editor.get_text")["text"]

@@ -159,7 +159,7 @@ endif()
 # source of truth: the per-arch SHA-256s below are pinned to this exact tag, so
 # the version must not be independently overridable via -D (which would leave a
 # stale cached value pointing at mismatched hashes).
-set(TROWEL_TURMERIC_VERSION "v0.61.0")
+set(TROWEL_TURMERIC_VERSION "v0.62.0")
 
 # Select the release asset + its SHA-256 for this platform/arch. Hashes are from
 # the release's sha256sums.txt.
@@ -178,22 +178,22 @@ if(APPLE)
     if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64" OR
        CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
         set(_turmeric_key "macos-arm64")
-        set(_turmeric_sha "307dcd1c1f31ae5863472768a615e1f27b14075504c5a54cb2bc60e0191eb01f")
+        set(_turmeric_sha "643ffcee2c5434d28b3e2862b1afc759cc62929beeb936de7a22af0ce8b67342")
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
         set(_turmeric_key "linux-x86_64")
-        set(_turmeric_sha "280a2ab74b6940ac98cc07bd01238c2a7e1c980baa599bed62cc18a9283d7b27")
+        set(_turmeric_sha "5fbb8ba6893a20ad3b38b5eca5d2e657fcbd26488d473c58f55e5bd103922878")
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         set(_turmeric_key "linux-aarch64")
-        set(_turmeric_sha "19914212b6e67b315f847a3c071b1506aee22cb7c70133e420c813b6dba96a85")
+        set(_turmeric_sha "0baf34cb664d8531d760a325c16ae350acf637637032f94ba99103196f4284a5")
     endif()
 elseif(WIN32)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^([Aa][Mm][Dd]64|x86_64|X86)$" OR
        CMAKE_SIZEOF_VOID_P EQUAL 8)
         set(_turmeric_key "windows-x86_64")
         set(_turmeric_ext "zip")
-        set(_turmeric_sha "588003426a0edeb95d8972d69f8dcf4213fd5540b8581c5a4a35261059e0580a")
+        set(_turmeric_sha "06fcb6084e9f71fda7e7ee90041873909018c31d8736b759de0bee9abc501ae2")
     endif()
 endif()
 

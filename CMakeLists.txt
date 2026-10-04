@@ -326,9 +326,19 @@ endif()
 
 # ---- Linux install layout ---------------------------------------------------
 # Install the binary with the bundled Turmeric toolchain as a sibling `turmeric/`
-# directory, matching the runtime probe (<dir-of-binary>/turmeric/tur). This is
-# what the AppImage recipe (docs/guides) stages into the AppDir. Desktop-file,
-# icon, and MIME integration are added in a later step.
+# directory, matching the runtime probe in src/repl/repl_session.cpp. That probe
+# accepts EITHER published archive layout -- `turmeric/bin/tur` for the prefix
+# layout the releases have used since Turmeric v0.47.0, and `turmeric/tur` for
+# the flat one before it -- and the staged tree is whichever shape the pin
+# fetched, so neither path can be assumed here.
+#
+# This comment used to name the flat path alone, which is the assumption that
+# broke every AppImage build from v0.3.0 to v0.3.1: scripts/build-appimage.sh
+# hardcoded it for its `ldd` lookup. Keep both spellings in mind when touching
+# anything that reaches into the staged toolchain.
+#
+# This is what the AppImage recipe (docs/guides) stages into the AppDir.
+# Desktop-file, icon, and MIME integration are added in a later step.
 if(NOT APPLE)
     include(GNUInstallDirs)
     install(TARGETS trowel RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

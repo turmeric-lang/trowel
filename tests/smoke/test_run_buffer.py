@@ -70,9 +70,21 @@ def test_run_sweet_buffer_leaves_its_definitions_in_the_session(
     trowel.wait_output("sweet main ran", timeout_ms=8000)
     trowel.wait_idle(quiet_ms=400, timeout_ms=5000)
 
+    # Asserted against the rendered SCREEN, not wait_output, for the reason
+    # test_run_selection_keeps_the_lang_directive gives below: the REPL colours
+    # a result, so `=> 8` spans an ANSI boundary.
+    #
+    # `wait_output` is racy for such a pattern rather than simply broken, which
+    # is worse. It checks the rendered screen FIRST -- where the codes are
+    # already interpreted and `=> 8` is contiguous -- and only if the output has
+    # not landed yet does it fall back to accumulating RAW bytes, where it never
+    # matches. So it passes whenever the result beats the call and times out
+    # whenever it does not. This test passed on the v0.61.0 pin and failed on
+    # v0.62.0 purely on that coin-flip; nothing about either toolchain changed.
     trowel.send("(+ sweet-main-x 1)")
-    hit = trowel.wait_output("=> 8", timeout_ms=8000)
-    assert "=> 8" in hit["matched"]
+    trowel.wait_idle(quiet_ms=400, timeout_ms=8000)
+    screen = trowel.call("repl.get_screen", {"lines": 40})["text"]
+    assert "=> 8" in screen, screen
 
 
 def test_run_selection_keeps_the_lang_directive(trowel, tmp_path: Path):

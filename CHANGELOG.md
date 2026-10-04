@@ -6,6 +6,49 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- New releases are inserted immediately below this comment. -->
 
+## [0.3.0] -- 2026-10-03
+
+### Added
+- **Saffron and R7RS** -- `#lang` now names one of ten base dialects and Trowel
+  knows all of them. A **Dialect** picker (Run > Dialect) grouped by language
+  edits the `#lang` line in place, in one undo step; `.scm` is recognized
+  everywhere `.tur` is; Scheme gets its own scanner (`#true`, `#\x41`, `#(`,
+  `#u8(`, `|bar symbols|`, radix prefixes, rationals, `,@`) with the
+  Turmeric-only syntax gated off; and the REPL session follows the buffer --
+  running a Scheme file switches the session to it, because `#lang r7rs`
+  selects a prelude rather than just a reader.
+- **Signature help** (`Ctrl+Shift+P`, and automatically after a space) and
+  **Find Symbol in Project** (`Ctrl+Shift+T`) -- two capabilities the language
+  server had always advertised and nothing asked for.
+- **Go to Diagnostic Source** (`Shift+F12`) -- an error inside a `load`ed file
+  is reported on the `(load ...)` form, so the status bar now says "Error in a
+  dependency" and this jumps to the code that is actually wrong.
+
+### Changed
+- **Bundled Turmeric v0.61.0** -- updated the embedded `tur` compiler/REPL from
+  v0.42.2. Brings the Saffron and R7RS dialects this release is built on, the
+  MIR JIT on by default, dialect-aware `tur fmt`, `tur repl --lang`, and
+  `tur dialects`.
+- **Format File uses `tur fmt --stdin --lang`** -- the previous call passed no
+  dialect, which formatted a Scheme buffer to different bytes and destroyed a
+  sweet one outright.
+- **A new app icon**, and the debugger panes and tab bar take a monospace UI
+  font.
+
+### Fixed
+- **Run Buffer loaded sweet programs instead of running them.** It routed
+  `.tur.sweet` through `(load ...)` to work around a toolchain defect fixed
+  long ago, and `load` defines `main` without invoking it -- the same bug
+  v0.2.1 fixed for `.tur` and left standing for sweet.
+- **The bundled toolchain could be the wrong one.** Staging never cleared, so a
+  bumped pin left the previous `tur` beside the new one; and the stdlib pin was
+  computed as `<dir-of-binary>/stdlib`, which the released archive layout moved
+  -- four of its five call sites silently stopped applying it, and an ambient
+  stdlib won instead, putting twelve phantom errors on every clean buffer.
+- **Markdown code fences.** ```` ```sweet-exp ```` -- the tag Turmeric's own
+  guides use for every sweet example -- was unrecognized, and ```` ```scheme ````
+  highlighted as Turmeric.
+
 ## [0.2.1] -- 2026-09-01
 
 Supersedes v0.2.0, which was withdrawn: its Linux AppImage jobs failed to

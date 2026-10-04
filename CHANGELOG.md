@@ -6,6 +6,30 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- New releases are inserted immediately below this comment. -->
 
+## [0.3.1] -- 2026-10-04
+
+### Changed
+- **Bundled Turmeric v0.62.0** -- updated the embedded `tur` compiler/REPL from
+  v0.61.0. Places another file's diagnostics through `load` chains, macro calls
+  and stdlib errors, so an error two `load`s deep now reports on the open file's
+  own load form and names the hop it came through -- `in deep.tur:1:19 (via
+  mid.tur): ...` -- with Go to Diagnostic Source landing in the innermost file
+  rather than the intermediate one.
+
+### Fixed
+- **The AppImage build says why it failed.** Both Linux legs of the v0.3.0
+  release died fetching linuxdeploy with nothing in the log but `exit code 1`:
+  `curl -fsSL` fails the build on an HTTP error and silences the message
+  explaining which one. The fetch now retries transient failures, bounds its
+  timeouts, and on failure records the server's actual answer. (The v0.3.0
+  AppImages are still missing; this is what makes the next failure
+  diagnosable.)
+
+### Internal
+- Three smoke tests were timed with fixed sleeps rather than waiting for the
+  condition they asserted, which made them fail under load and -- in one case
+  -- unable to fail at all. All three now poll.
+
 ## [0.3.0] -- 2026-10-03
 
 ### Added

@@ -5,7 +5,7 @@ programming language, for macOS and Linux.
 
 <img src="docs/images/screenshot.png" alt="Trowel editing a Turmeric source file" width="400">
 
-**Latest release:** `v0.3.0` — the Saffron and R7RS dialects end to end, signature help and project-wide symbol search, and Turmeric v0.61.0.
+**Latest release:** `v0.3.1` — Turmeric v0.62.0 with dependency errors traced through `load` chains, and a diagnosable AppImage build.
 
 ## Install
 

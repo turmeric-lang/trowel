@@ -45,12 +45,34 @@ DESTDIR="$PWD/$APPDIR" cmake --install "$BUILD_DIR" --prefix /usr >/dev/null
 
 echo "==> Fetching linuxdeploy + qt plugin (${ARCH})"
 mkdir -p "$TOOLS_DIR"
+# Fetch a tool, and SAY WHY if it fails.
+#
+# This was `curl -fsSL -o "$dest" "$url"` under `set -euo pipefail`. `-f` makes
+# curl exit non-zero on an HTTP error and `-s` silences the message explaining
+# it, so a failure here killed the script with nothing in the log but
+# `##[error]Process completed with exit code 1.` -- which is exactly how two
+# v0.3.0 release runs failed on both architectures, 0.7-1.2s after the fetch
+# started, while all six asset URLs answered 200 from outside CI. The cause was
+# not diagnosable after the fact, because it had been thrown away.
+#
+# So: keep -f (a 404 must still fail the build), drop -s, retry transient
+# errors, and on failure re-probe once to put the server's actual answer in the
+# log. A 403, a DNS failure and a rate limit read very differently and want
+# different fixes.
 fetch() {  # fetch <url> <dest>
-    local url="$1" dest="$2"
-    if [ ! -x "$dest" ]; then
-        curl -fsSL -o "$dest" "$url"
-        chmod +x "$dest"
+    local url="$1" dest="$2" code=0
+    [ -x "$dest" ] && return 0
+    echo "    GET $url"
+    curl -fL --retry 3 --retry-all-errors --retry-delay 2 \
+         --connect-timeout 20 --max-time 600 -o "$dest" "$url" || code=$?
+    if [ "$code" -ne 0 ]; then
+        echo "    curl exited $code fetching $url" >&2
+        curl -sS -o /dev/null -L --max-time 30 \
+             -w "    server said HTTP %{http_code} (dns %{time_namelookup}s, connect %{time_connect}s)\n" \
+             "$url" >&2 || true
+        return 1
     fi
+    chmod +x "$dest"
 }
 BASE="https://github.com/linuxdeploy"
 fetch "${BASE}/linuxdeploy/releases/download/continuous/linuxdeploy-${ARCH}.AppImage" \

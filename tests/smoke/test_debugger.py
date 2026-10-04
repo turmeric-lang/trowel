@@ -441,6 +441,18 @@ def test_reverse_steps_are_no_ops_in_a_live_session(trowel, fixture_files: Path)
 
     # Deliberately not `_step`: nothing is expected to land, so waiting for a
     # stop that will never come would only cost the timeout.
+    #
+    # And deliberately a FIXED sleep, not a poll. The assertion below is a
+    # NEGATIVE one -- that these two commands changed nothing -- and there is no
+    # state to wait for: polling would either return instantly (the condition
+    # already holds) or spin to a timeout. A fixed interval is the only thing
+    # that gives a wrong implementation a chance to misbehave before we look.
+    #
+    # Its failure mode is the opposite of a flake: under load the spurious stop
+    # this guards against is LESS likely to have landed by the time we check, so
+    # the risk is a false pass, never a false failure. If that matters more
+    # later, the fix is a longer interval or a positive signal to await -- not a
+    # poll.
     trowel.call("debug.step", {"kind": "back"})
     trowel.call("debug.reverse_continue")
     import time
@@ -723,10 +735,29 @@ def test_seek_moves_the_cursor_and_the_frames_follow(trowel, fixture_files: Path
                 break
             time.sleep(0.05)
         assert trowel.call("debug.timeline")["index"] == last
+
         # An out-of-range seek clamps rather than erroring: a scrubber dragged
         # past the end means "the end".
+        #
+        # Seek back to 0 FIRST, so the clamp has to actively move the cursor to
+        # `last` rather than leave it where it already was. This used to seek
+        # out-of-range while the index was already `last` and then sleep 0.4s
+        # before checking -- an assertion that holds whether or not clamping
+        # works at all, and therefore a test that could not fail. Starting from
+        # the other end also makes it pollable: there is now a positive state
+        # to wait for.
+        trowel.call("debug.seek", {"index": 0})
+        for _ in range(60):
+            if trowel.call("debug.timeline")["index"] == 0:
+                break
+            time.sleep(0.05)
+        assert trowel.call("debug.timeline")["index"] == 0
+
         trowel.call("debug.seek", {"index": 10 ** 9})
-        time.sleep(0.4)
+        for _ in range(60):
+            if trowel.call("debug.timeline")["index"] == last:
+                break
+            time.sleep(0.05)
         assert trowel.call("debug.timeline")["index"] == last
         trowel.call("debug.stop")
     finally:

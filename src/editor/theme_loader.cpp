@@ -344,7 +344,13 @@ void ApplyThemeToEditor(ScintillaEdit* sci, const Theme& theme) {
         sci->markerSetFore(m, foldFore);
         sci->markerSetBack(m, foldBack);
     }
-    sci->setMarginBackN(2, bgra(theme.editorBg));
+    // Scintilla draws the fold margin with a dithered checkerboard pattern
+    // by default (selbar/selbarlight).  Override both the fill and the
+    // stripe colour with the editor background so the margin is solid and
+    // matches the body.
+    sci->setFoldMarginColour(true, foldBack);
+    sci->setFoldMarginHiColour(true, foldBack);
+    sci->setMarginBackN(2, foldBack);
 
     // Debugger gutter markers. The breakpoint marker is a filled circle
     // (fore = fill, back = editor bg so it reads as a dot, not a block); the

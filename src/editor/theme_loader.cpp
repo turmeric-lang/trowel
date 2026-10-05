@@ -334,6 +334,18 @@ void ApplyThemeToEditor(ScintillaEdit* sci, const Theme& theme) {
     sci->markerSetBack(diag::kWarningMarker, bgra(theme.diagnosticWarning));
     sci->setMarginBackN(margins::kGutter, bgra(theme.editorBg));
 
+    // Fold markers: filled triangles in the line-number colour, with the
+    // editor background behind them so the margin reads as transparent.
+    // fore = triangle fill, back = editor bg (no visible stroke).
+    const int foldFore = bgra(theme.lineNumberFg);
+    const int foldBack = bgra(theme.editorBg);
+    for (int m : {SC_MARKNUM_FOLDER, SC_MARKNUM_FOLDEROPEN,
+                  SC_MARKNUM_FOLDEREND, SC_MARKNUM_FOLDEROPENMID}) {
+        sci->markerSetFore(m, foldFore);
+        sci->markerSetBack(m, foldBack);
+    }
+    sci->setMarginBackN(2, bgra(theme.editorBg));
+
     // Debugger gutter markers. The breakpoint marker is a filled circle
     // (fore = fill, back = editor bg so it reads as a dot, not a block); the
     // disabled/pending marker is hollow (back = editor bg, fore = the dim

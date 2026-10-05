@@ -425,6 +425,19 @@ void EditorView::applyDefaultStyling() {
     sci_->setFoldFlags(SC_FOLDFLAG_LINEAFTER_CONTRACTED);
     sci_->setDefaultFoldDisplayText(" \xe2\x80\xa6 ");  // " … "
 
+    // Fold markers: triangles on header lines, nothing on body/tail lines.
+    // SC_MARK_ARROW is a right-pointing triangle (contracted);
+    // SC_MARK_ARROWDOWN is a down-pointing triangle (expanded).
+    // Body and tail markers are SC_MARK_EMPTY so non-foldable lines show
+    // nothing.
+    sci_->markerDefine(SC_MARKNUM_FOLDER,        SC_MARK_ARROW);      // contracted header
+    sci_->markerDefine(SC_MARKNUM_FOLDEROPEN,     SC_MARK_ARROWDOWN);  // expanded header
+    sci_->markerDefine(SC_MARKNUM_FOLDEREND,       SC_MARK_ARROW);      // contracted, end of range
+    sci_->markerDefine(SC_MARKNUM_FOLDEROPENMID,   SC_MARK_ARROWDOWN);  // expanded, mid range
+    sci_->markerDefine(SC_MARKNUM_FOLDERSUB,       SC_MARK_EMPTY);      // body line
+    sci_->markerDefine(SC_MARKNUM_FOLDERTAIL,      SC_MARK_EMPTY);      // tail line
+    sci_->markerDefine(SC_MARKNUM_FOLDERMIDTAIL,   SC_MARK_EMPTY);      // mid tail line
+
     sci_->markerDefine(diag::kErrorMarker, SC_MARK_CIRCLE);
     sci_->markerDefine(diag::kWarningMarker, SC_MARK_CIRCLE);
     // Breakpoint markers: a filled circle when enabled, a hollow circle when

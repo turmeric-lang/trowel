@@ -20,8 +20,8 @@ WAIT_MS = 8000
 # generous budget the handler defaults to rather than the interactive one.
 RENAME_MS = 12000
 
-REFERENCES = ["Run", "Find References"]
-RENAME = ["Run", "Rename Symbol"]
+REFERENCES = ["Go", "Find References"]
+RENAME = ["Edit", "Rename Symbol…"]
 
 
 def _require_server(trowel):

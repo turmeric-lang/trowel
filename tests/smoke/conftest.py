@@ -133,17 +133,36 @@ def _launch_trowel(tmp_path: Path, args: list[str] | None = None) -> TrowelProc:
     # the developer's real preferences — restoring their open buffers into a
     # test that expects an empty one. This pins settings to a per-test INI file.
     env["TROWEL_SETTINGS_DIR"] = str(home / "settings")
-    # Optional override for the `tur` the app resolves, seeded into the same
-    # per-test INI that TROWEL_SETTINGS_DIR pins. `ResolveTurBinary()` checks
-    # QSettings "repl/turBinary" first, so this is the supported way to run the
-    # suite against a locally built toolchain — which is what lets the timeline
-    # tests be exercised before TROWEL_TURMERIC_VERSION moves, instead of
-    # skipping until then.
+    # Settings.json isolation. Trowel reads its hand-editable settings from
+    # settings.json in TROWEL_CONFIG_DIR. Pin it to a per-test directory so
+    # tests start with no settings file.
+    config_dir = home / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    env["TROWEL_CONFIG_DIR"] = str(config_dir)
+    # Document-state.json isolation. Trowel writes per-file state to
+    # document-state.json in TROWEL_DATA_DIR. Pin it to a per-test directory
+    # so tests start with no state file.
+    data_dir = home / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    env["TROWEL_DATA_DIR"] = str(data_dir)
+    # Optional override for the `tur` the app resolves, seeded into
+    # settings.json as "turmeric.path". `ResolveTurBinary()` checks that key
+    # first, so this is the supported way to run the suite against a locally
+    # built toolchain — which is what lets the timeline tests be exercised
+    # before TROWEL_TURMERIC_VERSION moves, instead of skipping until then.
+    # Merge into any existing settings.json rather than overwriting, so
+    # tests that pre-write settings keep their keys.
     tur_override = os.environ.get("TROWEL_TEST_TUR")
     if tur_override:
-        ini = home / "settings" / "turmeric" / "Trowel.ini"
-        ini.parent.mkdir(parents=True, exist_ok=True)
-        ini.write_text(f"[repl]\nturBinary={tur_override}\n")
+        settings_path = config_dir / "settings.json"
+        existing = {}
+        if settings_path.exists():
+            try:
+                existing = json.loads(settings_path.read_text())
+            except (json.JSONDecodeError, ValueError):
+                existing = {}
+        existing["turmeric.path"] = tur_override
+        settings_path.write_text(json.dumps(existing))
     # Force English so REPL banners are predictable.
     env.setdefault("LC_ALL", "en_US.UTF-8")
 
@@ -268,6 +287,18 @@ class Session:
     def settings_ini(self) -> Path:
         """Where TROWEL_SETTINGS_DIR puts the INI (see _launch_trowel)."""
         return self._tmp_path / "home" / "settings" / "turmeric" / "Trowel.ini"
+
+    @property
+    def settings_json(self) -> Path:
+        """Where TROWEL_CONFIG_DIR puts settings.json (see _launch_trowel)."""
+        p = self._tmp_path / "home" / "config" / "settings.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def doc_state_json(self) -> Path:
+        """Where TROWEL_DATA_DIR puts document-state.json."""
+        return self._tmp_path / "home" / "data" / "document-state.json"
 
     def launch(self, args: list[str] | None = None) -> Client:
         tp = _launch_trowel(self._tmp_path, args)

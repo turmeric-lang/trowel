@@ -613,13 +613,17 @@ void ScanTurmeric(const ScanInput& in, LexState& st, Emitter& out, const Mode& m
         if (c == ')' || c == ']' || c == '}') {
             const TurStyle flat = (c == '}') ? TurStyle::CurlyInfix : TurStyle::Delim;
             TurStyle s = flat;
-            if (in.rainbow) {
-                if (st.turBracketDepth > 0) {
-                    --st.turBracketDepth;
+            // The depth must be tracked whether rainbow is on or not —
+            // folding (phase 5) and the line state both depend on it.
+            if (st.turBracketDepth > 0) {
+                --st.turBracketDepth;
+                if (st.turBracketDepth < st.minBracketDepth)
+                    st.minBracketDepth = st.turBracketDepth;
+                if (in.rainbow)
                     s = RainbowStyleForDepth(st.turBracketDepth);
-                } else {
+            } else {
+                if (in.rainbow)
                     s = TurStyle::BracketError;
-                }
             }
             emit(i, 1, s);
             ++i;

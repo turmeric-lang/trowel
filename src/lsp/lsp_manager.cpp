@@ -1,6 +1,7 @@
 #include "editor/dialect.h"
 #include "lsp/lsp_manager.h"
 
+#include "app/settings.h"
 #include "editor/editor_view.h"
 #include "editor/lexers.h"
 #include "lsp/lsp_client.h"
@@ -11,7 +12,6 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
-#include <QSettings>
 #include <QTimer>
 #include <QUrl>
 
@@ -61,11 +61,11 @@ LspManager::LspManager(QObject* parent)
 }
 
 bool LspManager::enabledInSettings() {
-    return QSettings().value("lsp/enabled", true).toBool();
+    return Settings::instance().lspEnabled();
 }
 
 QString LspManager::serverPath() const {
-    const QString override = QSettings().value("lsp/serverPath").toString();
+    const QString override = Settings::instance().lspServerPath();
     if (!override.isEmpty()) {
         const QFileInfo fi(override);
         if (fi.exists() && fi.isFile() && fi.isExecutable()) return fi.absoluteFilePath();

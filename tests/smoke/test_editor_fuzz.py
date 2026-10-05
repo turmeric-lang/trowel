@@ -227,3 +227,55 @@ def test_editor_survives_random_input(trowel, fixture_files, tmp_path, seed):
             f"Last operations (replay with TROWEL_FUZZ_SEEDS_LIST={seed}):\n"
             f"  {transcript}"
         )
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_fold_levels_match_full_relex(trowel, tmp_path, seed):
+    """After random edits, incremental fold levels equal a full re-lex.
+
+    This is the property that catches invalidation bugs: if the incremental
+    lexer skips a line, its fold level drifts from what a full re-lex
+    produces.
+    """
+    rng = random.Random(seed)
+    prog = tmp_path / f"fold_fuzz_{seed}.tur"
+    prog.write_text(SEED_TEXT)
+    trowel.call("editor.open", {"path": str(prog)})
+    _alive(trowel)
+
+    log: list[str] = []
+    stalls: list[str] = []
+    try:
+        for i in range(OPS_PER_CASE):
+            try:
+                _op(trowel, rng, log)
+            except Stalled as exc:
+                stalls.append(f"{log[-1] if log else '?'}: {exc}")
+                if len(stalls) > MAX_STALLS:
+                    pytest.fail(
+                        f"seed {seed}: {len(stalls)} operations outran the "
+                        f"socket timeout:\n  " + "\n  ".join(stalls))
+                trowel._ctl = _reconnect(trowel)  # noqa: SLF001
+                continue
+
+            # Every few ops, compare incremental vs full re-lex fold levels.
+            if i % 5 == 4:
+                incremental = trowel.call("editor.folds", {"force_relex": 0})
+                full = trowel.call("editor.folds", {"force_relex": 1})
+                if incremental != full:
+                    pytest.fail(
+                        f"seed {seed}, op {i}: incremental fold levels differ "
+                        f"from full re-lex after {log[-1]!r}\n"
+                        f"incremental: {incremental}\n"
+                        f"full:        {full}"
+                    )
+
+            if i % 3 == 0:
+                _alive(trowel)
+        _alive(trowel)
+    except Dead as exc:
+        transcript = "\n  ".join(log[-25:])
+        pytest.fail(
+            f"Trowel died during fold fuzz seed {seed} after {len(log)} ops: "
+            f"{exc}\nLast operations:\n  {transcript}"
+        )

@@ -6,6 +6,98 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- New releases are inserted immediately below this comment. -->
 
+## Unreleased
+
+### Changed (menu bar audit — Phase 1)
+- **Menu bar reorganised.** LSP and navigation commands moved from Run to a
+  new **Go** menu. Edit actions (Undo, Redo, Cut, Copy, Paste, Select All,
+  Toggle Comment, Indent, Outdent, Format File, Complete Symbol, Show
+  Documentation, Show Signature Help, Rename Symbol) are now in the **Edit**
+  menu, which was previously empty. Focus commands moved to the **Window**
+  menu. A **Help** menu was added. Font… was removed from View (replaced by
+  Zoom In / Zoom Out / Actual Size).
+- **Shortcut conflicts fixed.** `Ctrl+Shift+T` no longer collides between
+  Trace Buffer and Find Symbol in Project (the latter is now `Ctrl+Shift+J`).
+  On macOS, Next/Previous Tab moved to `⇧⌘]` / `⇧⌘[` (with `⌃Tab` as
+  alternate), Complete Symbol moved to `⌃Space`, Toggle Focus moved to
+  `⌃` ` ` , and Focus Editor moved to `⌥⌘E`.
+- **Side-bar-only actions are now in menus.** Toggle Split Orientation, Show
+  REPL, and Settings… are reachable from the View and Edit menus (or the app
+  menu on macOS) and via `menu.invoke`.
+- **Menu roles set explicitly** on macOS, so only About, Settings, and Quit
+  move to the app menu.
+- **New control command `menu.list`** returns every action with its path,
+  shortcuts, role, and state. The control socket is a public API (see
+  `socket-api.md`).
+- **New `src/platform/shortcuts.{h,cpp}`** centralises every shortcut in one
+  platform-aware table.
+
+### Added
+- **Go to Line…** command in the Go menu.
+- **Toggle Comment** editor command (per-language line-comment token).
+- **Zoom In / Zoom Out / Actual Size** in the View menu.
+- **About** dialog and **Help** menu.
+
+### Changed (settings file — Phase 2)
+- **Settings are now a hand-editable JSON file** (`settings.json`), not an
+  in-app tab. **Settings…** (`⌘,` / `Ctrl+,`) opens the file in a normal
+  editor tab; changes apply on save. See `docs/guides/settings.md` for every
+  key, its type, default, and effect.
+- **`PreferencesView` removed.** The in-app preferences tab, its QSettings
+  keys (`repl/turBinary`, `editor/rainbowBrackets`,
+  `editor/bracketPairGuides`, `lsp/enabled`, `lsp/serverPath`,
+  `editorFont`), and `TabContent::Kind::Preferences` are gone. A one-time
+  migration moves any existing QSettings values into `settings.json` on
+  first launch.
+- **Font… removed from the menu.** The font is now `editor.font.family` and
+  `editor.font.size` in `settings.json`. Zoom In / Zoom Out / Actual Size
+  cover quick size changes.
+- **`TROWEL_CONFIG_DIR`** environment variable pins the settings file
+  location (mirrors `TROWEL_SETTINGS_DIR` for QSettings state).
+
+### Added (find/replace — Phase 3)
+- **Find and Replace** with a find bar at the bottom of the editor pane.
+  Find (`⌘F` / `Ctrl+F`), Find and Replace (`⌥⌘F` / `Ctrl+H`), Find Next
+  (`⌘G` / `F3`), Find Previous (`⇧⌘G` / `Shift+F3`), Select All Occurrences
+  (`⌃⌘G` / `Ctrl+Shift+L`), and Use Selection for Find (`⌘E`, macOS only).
+  Supports match case, whole word, regex, and in-selection modes. Replace
+  All is one undo step.
+- **New control commands** `find.state`, `find.set`, `find.replace`.
+
+### Added (word wrap — Phase 4)
+- **Word wrap** with per-buffer toggle (View > Word Wrap, `⌥Z` / `Alt+Z`).
+  Prose (Markdown, PlainText) wraps by default; code does not. Defaults
+  configurable via `editor.wrap.prose` and `editor.wrap.code` in
+  `settings.json`.
+- **`Language::PlainText`** for `.txt`, `.text`, `.rst`, `.adoc`, `.org`,
+  and extensionless files like `LICENSE`, `COPYING`, `AUTHORS`, `NOTICE`.
+  Unknown files still fall back to Turmeric.
+- **New control command** `editor.state` returns `wrap` and `wrapOverride`.
+
+### Added (folding — Phase 5)
+- **Code folding** with three strategies: bracket depth (Turmeric, R7RS,
+  JSON), indentation (Python, Just), and headings (Markdown). View >
+  Folding submenu with Fold, Unfold, Toggle Fold, Fold All, Unfold All,
+  and Fold Top-Level Forms. Uses VS Code's `⌘K` / `Ctrl+K` chord shortcuts.
+- **`revealLine`** helper ensures jumps (go to definition, references,
+  find matches, etc.) unfold their target before scrolling.
+- **Fixed `turBracketDepth` bug**: bracket closers now decrement depth
+  regardless of the rainbow-brackets setting. Previously, with rainbow off,
+  depth only increased.
+- **New control commands** `editor.folds`, `editor.fold`.
+
+### Added (per-document state — Phase 6)
+- **Per-document state** remembers caret, selection, scroll position,
+  fold state, and wrap override per file. State is saved on tab close,
+  window close, save, and tab switch; restored on open. Folds are only
+  restored when the file has not changed (verified by size and mtime).
+- **`editor.rememberDocumentState`** setting (default `true`) in
+  `settings.json` controls whether state is saved and restored.
+- **File > Open Recent > Clear Menu** also clears document state.
+- **`TROWEL_DATA_DIR`** environment variable pins the document-state.json
+  location (for test isolation).
+- **New control commands** `editor.pos_from_linecol`, `doc_state.path`.
+
 ## [0.3.2] -- 2026-10-04
 
 ### Fixed

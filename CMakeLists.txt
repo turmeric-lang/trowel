@@ -32,8 +32,10 @@ add_library(trowel_lib STATIC
     src/app/icon_font.h
     src/app/main_window.cpp
     src/app/main_window.h
-    src/app/preferences_view.cpp
-    src/app/preferences_view.h
+    src/app/document_state.cpp
+    src/app/document_state.h
+    src/app/settings.cpp
+    src/app/settings.h
     src/app/repl_pane.cpp
     src/app/repl_pane.h
     src/app/single_instance.cpp
@@ -47,6 +49,10 @@ add_library(trowel_lib STATIC
     src/app/window_manager.h
     src/editor/editor_view.cpp
     src/editor/editor_view.h
+    src/editor/find_bar.cpp
+    src/editor/find_bar.h
+    src/editor/find_engine.cpp
+    src/editor/find_engine.h
     src/editor/lexers.h
     src/editor/lexer_adapter.cpp
     src/editor/scanner.h
@@ -62,6 +68,8 @@ add_library(trowel_lib STATIC
     src/editor/scanner_turmeric.cpp
     src/editor/theme_loader.cpp
     src/editor/theme_loader.h
+    src/platform/shortcuts.cpp
+    src/platform/shortcuts.h
     src/lsp/lsp_client.cpp
     src/lsp/lsp_client.h
     src/lsp/lsp_location.h
@@ -102,6 +110,7 @@ add_library(trowel_lib STATIC
     ${TROWEL_RESOURCES}
 )
 target_include_directories(trowel_lib PUBLIC src)
+target_include_directories(trowel_lib PRIVATE "${CMAKE_BINARY_DIR}/generated")
 # The pty backend is per-platform: forkpty on POSIX, ConPTY on Windows.
 # Two files rather than one with #ifdefs -- they share only the interface,
 # and the Windows one needs windows.h at the top of the translation unit.

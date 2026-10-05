@@ -1,5 +1,8 @@
 #include "editor/editor_view.h"
 
+#include "app/settings.h"
+#include "editor/find_bar.h"
+#include "editor/find_engine.h"
 #include "editor/lexers.h"
 #include "editor/theme_loader.h"
 #include "lsp/lsp_manager.h"
@@ -16,7 +19,6 @@
 #include <QLineEdit>
 #include <QPainter>
 #include <QPen>
-#include <QSettings>
 #include <QTextStream>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -161,11 +163,17 @@ EditorView::EditorView(QWidget* parent)
     layout->setContentsMargins(0, 4, 0, 0);
     layout->addWidget(sci_);
 
+    findBar_ = new FindBar(this);
+    findBar_->hide();
+    layout->addWidget(findBar_);
+
     applyDefaultStyling();
 
     rainbow_ = rainbowBracketsDefault();
     bracketGuides_ = bracketPairGuidesDefault();
     installLexer();
+    applyWrap();
+    applyFoldMargin();
     ApplyThemeToEditor(sci_, LoadBuiltinDarkTheme());
 
     connect(sci_, &ScintillaEditBase::savePointChanged, this, [this](bool dirty) {
@@ -290,6 +298,39 @@ EditorView::EditorView(QWidget* parent)
         occurrenceDebounce_->start();  // restarts, coalescing bursts
     });
 
+    // --- Find bar connections ---
+    findDebounce_ = new QTimer(this);
+    findDebounce_->setSingleShot(true);
+    findDebounce_->setInterval(100);
+    connect(findDebounce_, &QTimer::timeout, this, [this] { runFindSearch(); });
+
+    connect(findBar_, &FindBar::searchChanged, this, [this] {
+        // Sync the query from the bar into findQuery_ before the debounce
+        // fires, so runFindSearch() always reads from findQuery_.
+        findQuery_.text = findBar_->query();
+        findQuery_.matchCase = findBar_->matchCase();
+        findQuery_.wholeWord = findBar_->wholeWord();
+        findQuery_.regex = findBar_->regex();
+        findQuery_.inSelection = findBar_->inSelection();
+        if (findQuery_.inSelection) {
+            findQuery_.rangeStart = findSelectionStart_;
+            findQuery_.rangeEnd = findSelectionEnd_;
+        }
+        findDebounce_->start();
+    });
+    connect(findBar_, &FindBar::findNextRequested, this, [this] { findNext(); });
+    connect(findBar_, &FindBar::findPreviousRequested, this, [this] { findPrevious(); });
+    connect(findBar_, &FindBar::replaceRequested, this, [this] {
+        replaceCurrent(findBar_->replaceField()->text());
+    });
+    connect(findBar_, &FindBar::replaceAllRequested, this, [this] {
+        replaceAll(findBar_->replaceField()->text());
+    });
+    connect(findBar_, &FindBar::closed, this, [this] { hideFind(); });
+    connect(findBar_, &FindBar::selectAllOccurrencesRequested, this, [this] {
+        selectAllOccurrences();
+    });
+
     attachLanguageServer();
 }
 
@@ -368,11 +409,21 @@ void EditorView::applyDefaultStyling() {
                          (1 << dbg::kBreakpointDisabledStoppedMarker));
     sci_->setMarginSensitiveN(margins::kGutter, true);
 
-    // The remaining two margins are held at zero. Scintilla always has four;
-    // this editor wants two. Margin 2 is the conventional fold margin and is
-    // left free for that.
-    sci_->setMarginWidthN(2, 0);
+    // The remaining two margins: margin 2 is the fold margin (set up in
+    // applyFoldMargin for languages that have a fold strategy); margin 3 is
+    // held at zero.
     sci_->setMarginWidthN(3, 0);
+
+    // Fold markers and automatic fold behaviour.  Configured once here;
+    // the margin width is toggled by applyFoldMargin() when the language
+    // changes.
+    sci_->setMarginTypeN(2, SC_MARGIN_SYMBOL);
+    sci_->setMarginMaskN(2, SC_MASK_FOLDERS);
+    sci_->setMarginSensitiveN(2, true);
+    sci_->setAutomaticFold(SC_AUTOMATICFOLD_SHOW | SC_AUTOMATICFOLD_CLICK
+                           | SC_AUTOMATICFOLD_CHANGE);
+    sci_->setFoldFlags(SC_FOLDFLAG_LINEAFTER_CONTRACTED);
+    sci_->setDefaultFoldDisplayText(" \xe2\x80\xa6 ");  // " … "
 
     sci_->markerDefine(diag::kErrorMarker, SC_MARK_CIRCLE);
     sci_->markerDefine(diag::kWarningMarker, SC_MARK_CIRCLE);
@@ -458,6 +509,12 @@ void EditorView::applyDefaultStyling() {
     sci_->setScrollWidthTracking(true);
     sci_->setHScrollBar(true);
     sci_->setEndAtLastLine(false);
+
+    // Rebind Home/End to the wrap-aware versions so the first press goes to
+    // the start/end of the display row and the second to the document line.
+    // These work correctly with and without wrap.
+    sci_->assignCmdKey(SCK_HOME, SCI_VCHOMEWRAP);
+    sci_->assignCmdKey(SCK_END, SCI_LINEENDWRAP);
 }
 
 void EditorView::setFont(const QFont& font) {
@@ -480,7 +537,7 @@ void EditorView::setFont(const QFont& font) {
 }
 
 bool EditorView::rainbowBracketsDefault() {
-    return QSettings().value("editor/rainbowBrackets", true).toBool();
+    return Settings::instance().rainbowBrackets();
 }
 
 void EditorView::installLexer() {
@@ -520,6 +577,113 @@ void EditorView::setRainbowBrackets(bool enabled) {
     if (rainbow_ == enabled) return;
     rainbow_ = enabled;
     installLexer();
+}
+
+// --- Word wrap (Phase 4) ---
+
+bool EditorView::isWordWrap() const {
+    return sci_->wrapMode() != SC_WRAP_NONE;
+}
+
+void EditorView::setWrapOverride(WrapOverride wo) {
+    wrapOverride_ = wo;
+    applyWrap();
+}
+
+void EditorView::toggleWordWrap() {
+    // Cycle Default -> On -> Off -> Default.
+    switch (wrapOverride_) {
+    case WrapOverride::Default: wrapOverride_ = WrapOverride::On;  break;
+    case WrapOverride::On:      wrapOverride_ = WrapOverride::Off;  break;
+    case WrapOverride::Off:     wrapOverride_ = WrapOverride::Default; break;
+    }
+    applyWrap();
+}
+
+void EditorView::applyWrap() {
+    const bool isProse = (language_ == Language::Markdown ||
+                          language_ == Language::PlainText);
+    bool wrap;
+    switch (wrapOverride_) {
+    case WrapOverride::On:      wrap = true;  break;
+    case WrapOverride::Off:     wrap = false; break;
+    case WrapOverride::Default:
+        wrap = isProse ? Settings::instance().wrapProse()
+                       : Settings::instance().wrapCode();
+        break;
+    }
+
+    if (wrap) {
+        sci_->setWrapMode(SC_WRAP_WORD);
+        sci_->setWrapIndentMode(isProse ? SC_WRAPINDENT_SAME
+                                        : SC_WRAPINDENT_INDENT);
+        sci_->setWrapVisualFlags(SC_WRAPVISUALFLAG_MARGIN);
+        sci_->setLayoutCache(SC_CACHE_PAGE);
+    } else {
+        sci_->setWrapMode(SC_WRAP_NONE);
+    }
+}
+
+// --- Folding (Phase 5) ---
+
+bool EditorView::hasFolding() const {
+    return HasFoldStrategy(language_);
+}
+
+void EditorView::applyFoldMargin() {
+    // Show the fold margin only for languages that have a fold strategy,
+    // so it does not appear and disappear while typing.
+    sci_->setMarginWidthN(2, HasFoldStrategy(language_) ? 12 : 0);
+}
+
+// Find the header line for the caret: the line itself if it is a header,
+// otherwise the nearest enclosing header via SCI_GETFOLDPARENT.  Returns -1
+// if there is none.
+static int FoldHeaderForCaret(ScintillaEdit* sci) {
+    const int line = static_cast<int>(sci->lineFromPosition(sci->currentPos()));
+    const int level = static_cast<int>(sci->foldLevel(line));
+    if (level & SC_FOLDLEVELHEADERFLAG)
+        return line;
+    // Not a header — find the enclosing header.
+    const int parent = static_cast<int>(sci->foldParent(line));
+    return parent;
+}
+
+void EditorView::foldCurrent() {
+    const int header = FoldHeaderForCaret(sci_);
+    if (header < 0) return;
+    sci_->foldLine(header, SC_FOLDACTION_CONTRACT);
+}
+
+void EditorView::unfoldCurrent() {
+    const int header = FoldHeaderForCaret(sci_);
+    if (header < 0) return;
+    sci_->foldLine(header, SC_FOLDACTION_EXPAND);
+}
+
+void EditorView::toggleFold() {
+    const int header = FoldHeaderForCaret(sci_);
+    if (header < 0) return;
+    sci_->foldLine(header, SC_FOLDACTION_TOGGLE);
+}
+
+void EditorView::foldAll() {
+    sci_->foldAll(SC_FOLDACTION_CONTRACT | SC_FOLDACTION_CONTRACT_EVERY_LEVEL);
+    // Move the caret to the header of the region it was in.
+    const int header = FoldHeaderForCaret(sci_);
+    if (header >= 0)
+        sci_->gotoLine(header);
+}
+
+void EditorView::unfoldAll() {
+    sci_->foldAll(SC_FOLDACTION_EXPAND);
+}
+
+void EditorView::foldTopLevel() {
+    sci_->foldAll(SC_FOLDACTION_CONTRACT);
+    const int header = FoldHeaderForCaret(sci_);
+    if (header >= 0)
+        sci_->gotoLine(header);
 }
 
 bool EditorView::loadFile(const QString& path) {
@@ -1070,7 +1234,8 @@ void EditorView::repositionBracketGuideOverlay() {
         static_cast<int>(sci_->positionFromLine(openerLine))));
     const int barBottom = static_cast<int>(sci_->pointYFromPosition(
         static_cast<int>(sci_->positionFromLine(closerLine))))
-        + static_cast<int>(sci_->textHeight(closerLine));
+        + static_cast<int>(sci_->textHeight(closerLine))
+        * static_cast<int>(sci_->wrapCount(closerLine));
     // Right-aligned against the last margin, so it sits on the gutter/text
     // boundary and reads as an edge marker rather than as another indent guide.
     int marginsWidth = 0;
@@ -1181,7 +1346,7 @@ void EditorView::updateBracketGuide() {
 }
 
 bool EditorView::bracketPairGuidesDefault() {
-    return QSettings().value("editor/bracketPairGuides", true).toBool();
+    return Settings::instance().bracketPairGuides();
 }
 
 void EditorView::setBracketPairGuides(bool enabled) {
@@ -1363,6 +1528,8 @@ void EditorView::refreshLanguage() {
     if (lang == language_) return;
     language_ = lang;
     installLexer();
+    applyWrap();  // re-resolve wrap default for the new language class
+    applyFoldMargin();  // show/hide fold margin for the new language
 }
 
 Dialect EditorView::dialect() const {
@@ -1430,6 +1597,255 @@ QByteArray EditorView::languageProbeText() const {
                         ? static_cast<int>(sci_->positionFromLine(probeLines))
                         : static_cast<int>(sci_->textLength());
     return textInRange(0, end);
+}
+
+// --- Find / Replace (Phase 3) --------------------------------------------
+
+void EditorView::runFindSearch() {
+    // Uses findQuery_ directly — it is synced from the bar by the
+    // searchChanged handler, and from setFindQuery by the control API.
+    if (findQuery_.text.isEmpty()) {
+        findResult_ = {};
+        if (findBar_ && findBar_->isVisible()) {
+            findBar_->setMatchCount(0, 0);
+            findBar_->setError({});
+        }
+        clearFindHighlights();
+        return;
+    }
+
+    const int caret = cursorPos();
+    findResult_ = FindAll(sci_, findQuery_, caret);
+
+    if (findBar_ && findBar_->isVisible()) {
+        findBar_->setError(findResult_.error);
+        findBar_->setMatchCount(findResult_.currentIndex, findResult_.count);
+    }
+    highlightFindMatches();
+    selectCurrentMatch();
+}
+
+void EditorView::highlightFindMatches() {
+    sci_->setIndicatorCurrent(find::kMatchIndicator);
+    sci_->indicatorClearRange(0, sci_->textLength());
+    for (const auto& m : findResult_.matches) {
+        sci_->indicatorFillRange(m.start, m.end - m.start);
+    }
+}
+
+void EditorView::selectCurrentMatch() {
+    if (findResult_.currentIndex < 0 ||
+        findResult_.currentIndex >= findResult_.matches.size()) return;
+    const auto& m = findResult_.matches[findResult_.currentIndex];
+    sci_->setSelection(m.end, m.start);
+    revealLine(sci_->lineFromPosition(m.start));
+    // Update the current-match indicator.
+    sci_->setIndicatorCurrent(find::kCurrentIndicator);
+    sci_->indicatorClearRange(0, sci_->textLength());
+    sci_->indicatorFillRange(m.start, m.end - m.start);
+}
+
+void EditorView::clearFindHighlights() {
+    sci_->setIndicatorCurrent(find::kMatchIndicator);
+    sci_->indicatorClearRange(0, sci_->textLength());
+    sci_->setIndicatorCurrent(find::kCurrentIndicator);
+    sci_->indicatorClearRange(0, sci_->textLength());
+}
+
+void EditorView::showFind(bool replace) {
+    if (!findBar_) return;
+    // Capture the selection for In Selection mode and for pre-filling the query.
+    const int selStart = sci_->selectionStart();
+    const int selEnd = sci_->selectionEnd();
+    const int lineStart = sci_->lineFromPosition(selStart);
+    const int lineEnd = sci_->lineFromPosition(selEnd);
+    if (selStart != selEnd && lineStart == lineEnd) {
+        // Single-line selection → pre-fill the query.
+        findBar_->setQuery(QString::fromUtf8(sci_->textRange(selStart, selEnd)));
+    }
+    findSelectionStart_ = selStart;
+    findSelectionEnd_ = selEnd;
+    findBar_->open(replace);
+    runFindSearch();
+}
+
+void EditorView::hideFind() {
+    if (!findBar_) return;
+    findBar_->closeBar();
+    clearFindHighlights();
+    sci_->QWidget::setFocus(Qt::OtherFocusReason);
+}
+
+bool EditorView::findBarVisible() const {
+    return findBar_ && findBar_->isVisible();
+}
+
+void EditorView::findNext() {
+    if (findQuery_.text.isEmpty()) return;
+    const int caret = cursorPos();
+    FindMatch m = FindNext(sci_, findQuery_, caret);
+    if (m.start < 0) {
+        // Wrap around.
+        m = FindNext(sci_, findQuery_, 0);
+    }
+    if (m.start >= 0) {
+        sci_->setSelection(m.end, m.start);
+        revealLine(sci_->lineFromPosition(m.start));
+        // Update current index for the count display.
+        for (int i = 0; i < findResult_.matches.size(); ++i) {
+            if (findResult_.matches[i].start == m.start) {
+                findResult_.currentIndex = i;
+                if (findBar_ && findBar_->isVisible())
+                    findBar_->setMatchCount(i, findResult_.count);
+                break;
+            }
+        }
+        // Update the current-match indicator.
+        sci_->setIndicatorCurrent(find::kCurrentIndicator);
+        sci_->indicatorClearRange(0, sci_->textLength());
+        sci_->indicatorFillRange(m.start, m.end - m.start);
+    }
+}
+
+void EditorView::findPrevious() {
+    if (findQuery_.text.isEmpty()) return;
+    const int caret = cursorPos();
+    FindMatch m = FindPrevious(sci_, findQuery_, caret);
+    if (m.start < 0) {
+        // Wrap around.
+        m = FindPrevious(sci_, findQuery_, sci_->textLength());
+    }
+    if (m.start >= 0) {
+        sci_->setSelection(m.end, m.start);
+        revealLine(sci_->lineFromPosition(m.start));
+        for (int i = 0; i < findResult_.matches.size(); ++i) {
+            if (findResult_.matches[i].start == m.start) {
+                findResult_.currentIndex = i;
+                if (findBar_ && findBar_->isVisible())
+                    findBar_->setMatchCount(i, findResult_.count);
+                break;
+            }
+        }
+        sci_->setIndicatorCurrent(find::kCurrentIndicator);
+        sci_->indicatorClearRange(0, sci_->textLength());
+        sci_->indicatorFillRange(m.start, m.end - m.start);
+    }
+}
+
+void EditorView::useSelectionForFind() {
+    const int selStart = sci_->selectionStart();
+    const int selEnd = sci_->selectionEnd();
+    if (selStart != selEnd) {
+        findBar_->setQuery(QString::fromUtf8(sci_->textRange(selStart, selEnd)));
+        findQuery_.text = findBar_->query();
+    }
+}
+
+void EditorView::selectAllOccurrences() {
+    if (findQuery_.text.isEmpty()) return;
+    // Re-run the search to get all matches.
+    findResult_ = FindAll(sci_, findQuery_, 0);
+    if (findResult_.matches.isEmpty()) return;
+
+    // Build a multi-selection from all matches.
+    sci_->clearSelections();
+    sci_->setSelection(findResult_.matches[0].end, findResult_.matches[0].start);
+    for (int i = 1; i < findResult_.matches.size(); ++i) {
+        sci_->addSelection(findResult_.matches[i].end, findResult_.matches[i].start);
+    }
+}
+
+void EditorView::setFindQuery(const QString& text, bool matchCase,
+                               bool wholeWord, bool regex, bool inSelection) {
+    if (!findBar_) return;
+    findBar_->setQuery(text);
+    findBar_->setFlags(matchCase, wholeWord, regex, inSelection);
+    findQuery_.text = text;
+    findQuery_.matchCase = matchCase;
+    findQuery_.wholeWord = wholeWord;
+    findQuery_.regex = regex;
+    findQuery_.inSelection = inSelection;
+    if (inSelection) {
+        // Capture the current selection as the search range, since
+        // showFind() may not have been called yet.
+        findSelectionStart_ = sci_->selectionStart();
+        findSelectionEnd_ = sci_->selectionEnd();
+        findQuery_.rangeStart = findSelectionStart_;
+        findQuery_.rangeEnd = findSelectionEnd_;
+    }
+    runFindSearch();
+}
+
+int EditorView::replaceCurrent(const QString& replacement) {
+    if (findResult_.currentIndex < 0 ||
+        findResult_.currentIndex >= findResult_.matches.size()) return 0;
+    const auto& m = findResult_.matches[findResult_.currentIndex];
+    sci_->setTargetRange(m.start, m.end);
+    if (findQuery_.regex) {
+        // Re-run the search on this match's range so replaceTargetRE
+        // resolves capture groups for *this* match.
+        const QByteArray qb = findQuery_.text.toUtf8();
+        sci_->searchInTarget(qb.length(), qb.constData());
+    }
+    ReplaceTarget(sci_, replacement, findQuery_.regex);
+    // Move to the next match.
+    findNext();
+    return 1;
+}
+
+int EditorView::replaceAll(const QString& replacement) {
+    if (findQuery_.text.isEmpty()) return 0;
+
+    // Re-run the search to get all matches.
+    findResult_ = FindAll(sci_, findQuery_, 0);
+    if (findResult_.matches.isEmpty()) return 0;
+
+    sci_->beginUndoAction();
+    int count = 0;
+    const QByteArray qb = findQuery_.text.toUtf8();
+    // Replace in descending order so earlier positions are not invalidated.
+    for (int i = findResult_.matches.size() - 1; i >= 0; --i) {
+        const auto& m = findResult_.matches[i];
+        sci_->setTargetRange(m.start, m.end);
+        if (findQuery_.regex) {
+            // Re-run the search on this match's range so replaceTargetRE
+            // resolves capture groups for *this* match, not the last one
+            // found by FindAll.
+            sci_->searchInTarget(qb.length(), qb.constData());
+        }
+        ReplaceTarget(sci_, replacement, findQuery_.regex);
+        ++count;
+    }
+    sci_->endUndoAction();
+
+    // Re-run the search to update highlights.
+    runFindSearch();
+    return count;
+}
+
+EditorView::FindState EditorView::findState() const {
+    FindState s;
+    s.open = findBar_ && findBar_->isVisible();
+    s.query = findQuery_.text;
+    s.matchCase = findQuery_.matchCase;
+    s.wholeWord = findQuery_.wholeWord;
+    s.regex = findQuery_.regex;
+    s.inSelection = findQuery_.inSelection;
+    s.count = findResult_.count;
+    s.current = findResult_.currentIndex;
+    s.error = findResult_.error;
+    return s;
+}
+
+void EditorView::revealLine(int line) {
+    // Unfold the target line if it is inside a folded region, then scroll
+    // it into view.
+    sci_->ensureVisibleEnforcePolicy(line);
+    const int visibleStart = sci_->firstVisibleLine();
+    const int linesOnScreen = sci_->linesOnScreen();
+    if (line < visibleStart || line >= visibleStart + linesOnScreen) {
+        sci_->scrollRange(0, line);
+    }
 }
 
 }

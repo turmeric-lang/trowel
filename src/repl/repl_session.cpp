@@ -1,12 +1,12 @@
 #include "repl/repl_session.h"
 
+#include "app/settings.h"
 #include "repl/pty_session.h"
 #include "repl/terminal_view.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
-#include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
 
@@ -96,7 +96,7 @@ QString TurStdlibDirFor(const QString& turBinary) {
 }
 
 QString ResolveTurBinary() {
-    const QString override = QSettings().value("repl/turBinary").toString();
+    const QString override = Settings::instance().turmericPath();
     QString resolved = ifExecutable(override);
     if (resolved.isEmpty()) resolved = ifExecutable(bundledTurPath());
     if (resolved.isEmpty()) resolved = QStandardPaths::findExecutable("tur");
@@ -133,10 +133,10 @@ void ReplSession::start(const QString& workingDir, Dialect dialect) {
     scanTail_.clear();
 
     // Resolution order:
-    //   1. QSettings "repl/turBinary" — user override (absolute path).
+    //   1. settings.json "turmeric.path" — user override (absolute path).
     //   2. Bundled binary inside Trowel.app (drag-install path).
     //   3. `tur` on the user's PATH (dev builds, homebrew, mise, …).
-    const QString override = QSettings().value("repl/turBinary").toString();
+    const QString override = Settings::instance().turmericPath();
     const QString bundled = bundledTurPath();
     const QString onPath = QStandardPaths::findExecutable(turBinary_);
 
@@ -146,7 +146,7 @@ void ReplSession::start(const QString& workingDir, Dialect dialect) {
 
     if (resolved.isEmpty()) {
         QString msg = QString("[trowel] could not locate `%1`. Tried:").arg(turBinary_);
-        msg += QString("\n  1. QSettings repl/turBinary = %1")
+        msg += QString("\n  1. settings.json turmeric.path = %1")
                    .arg(override.isEmpty() ? QStringLiteral("(unset)") : override);
         msg += QString("\n  2. bundled = %1").arg(bundled);
         msg += QString("\n  3. PATH lookup for `%1`").arg(turBinary_);

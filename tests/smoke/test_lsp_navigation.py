@@ -18,9 +18,9 @@ from trowel_ctl import ControlError
 # The first request pays for process spawn + initialize + a full compile.
 WAIT_MS = 8000
 
-GOTO = ["Run", "Go to Definition"]
-BACK = ["Run", "Go Back"]
-FORWARD = ["Run", "Go Forward"]
+GOTO = ["Go", "Go to Definition"]
+BACK = ["Go", "Go Back"]
+FORWARD = ["Go", "Go Forward"]
 
 
 def _require_server(trowel) -> dict:
@@ -289,7 +289,7 @@ def test_stdlib_tab_is_absent_from_the_restored_session(
 
 # --- the outline (T2) ------------------------------------------------------
 
-OUTLINE = ["Run", "Show Symbols"]
+OUTLINE = ["Go", "Show Symbols"]
 
 
 def _names(symbols) -> list:

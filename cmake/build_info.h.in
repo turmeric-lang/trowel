@@ -20,3 +20,7 @@
 // The Turmeric release staged inside the app bundle. Empty when no prebuilt
 // matched the host and Trowel falls back to `tur` on PATH.
 #define TROWEL_BUNDLED_TURMERIC_VERSION "@TROWEL_BUNDLED_TURMERIC@"
+
+// The Turmeric version Trowel is built against (e.g. "v0.62.0"), used for
+// documentation links and the About dialog.
+#define TROWEL_TURMERIC_VERSION "@TROWEL_TURMERIC_VERSION@"

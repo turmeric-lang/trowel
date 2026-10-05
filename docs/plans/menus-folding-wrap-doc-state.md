@@ -1,7 +1,7 @@
 # Menu audit, settings file, find/replace, word wrap, folding, per-document state — plan
 
-> **Status:** **Not started** (planned 2026-10-04). Phases 1–6 below are
-> ordered. Each phase ships on its own.
+> **Status:** **Phases 1–6 complete** (implemented 2026-10-04). All 351
+> smoke tests pass. Phases 1–6 below are ordered. Each phase ships on its own.
 > **Related:** [`minimap.md`](minimap.md) (requires that nothing here
 > breaks its display-line mapping), [`lsp-navigation.md`](lsp-navigation.md)
 > (owns the jump commands that folding has to unfold for),

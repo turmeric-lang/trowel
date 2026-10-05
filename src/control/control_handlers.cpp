@@ -2,6 +2,7 @@
 #include "control/control_handlers.h"
 
 #include "control/control_connection.h"
+#include "app/document_state.h"
 #include "app/main_window.h"
 #include "app/window_manager.h"
 #include "debug/breakpoint_model.h"
@@ -34,6 +35,7 @@
 #include <QSplitter>
 #include <QTimer>
 
+#include <functional>
 #include <memory>
 
 namespace trowel::control {
@@ -288,9 +290,88 @@ void HandleMenuInvoke(MainWindow* w, const QJsonObject& args, const Reply& reply
     for (const QJsonValue& v : args.value("path").toArray()) path.append(v.toString());
     QAction* a = FindMenuAction(w->menuBar(), path);
     if (!a) { ReplyErr(reply, "no_action", "menu action not found"); return; }
+    // Refresh the Edit menu's enabled state before checking, since
+    // menu.invoke does not fire aboutToShow the way a real click does.
+    if (path.size() >= 1 && path[0].compare("Edit", Qt::CaseInsensitive) == 0) {
+        w->updateEditActionsEnabled();
+    }
     if (!a->isEnabled()) { ReplyErr(reply, "action_disabled", "menu action is disabled"); return; }
     a->trigger();
     reply(Ok(), nullptr);
+}
+
+// Walk the menu bar recursively and return every action with its path,
+// shortcuts, role, enabled and checkable state.  Used by the duplicate-
+// shortcut test and the docs drift check.
+void HandleMenuList(MainWindow* w, const QJsonObject&, const Reply& reply) {
+    auto stripAmp = [](QString s) { return s.remove(QChar('&')); };
+
+    QJsonArray actions;
+    std::function<void(QMenu*, QStringList&)> walkMenu;
+    walkMenu = [&](QMenu* menu, QStringList& path) {
+        for (QAction* a : menu->actions()) {
+            if (a->isSeparator()) continue;
+            path.append(stripAmp(a->text()));
+            if (a->menu()) {
+                walkMenu(a->menu(), path);
+            } else {
+                QJsonObject o;
+                o["path"] = QJsonArray::fromStringList(path);
+                QJsonArray shortcuts;
+                for (const QKeySequence& ks : a->shortcuts()) {
+                    shortcuts.append(ks.toString());
+                }
+                o["shortcuts"] = shortcuts;
+                o["enabled"] = a->isEnabled();
+                o["checkable"] = a->isCheckable();
+                o["checked"] = a->isChecked();
+                QString role;
+                switch (a->menuRole()) {
+                case QAction::NoRole: role = "none"; break;
+                case QAction::TextHeuristicRole: role = "text"; break;
+                case QAction::ApplicationSpecificRole: role = "app"; break;
+                case QAction::AboutQtRole: role = "about_qt"; break;
+                case QAction::AboutRole: role = "about"; break;
+                case QAction::PreferencesRole: role = "preferences"; break;
+                case QAction::QuitRole: role = "quit"; break;
+                default: role = "unknown"; break;
+                }
+                o["role"] = role;
+                actions.append(o);
+            }
+            path.removeLast();
+        }
+    };
+
+    QStringList path;
+    for (QAction* a : w->menuBar()->actions()) {
+        if (a->isSeparator()) continue;
+        if (a->menu()) {
+            path.append(stripAmp(a->text()));
+            walkMenu(a->menu(), path);
+            path.removeLast();
+        } else {
+            // Top-level action (e.g. the macOS app-menu items).
+            path.append(stripAmp(a->text()));
+            QJsonObject o;
+            o["path"] = QJsonArray::fromStringList(path);
+            QJsonArray shortcuts;
+            for (const QKeySequence& ks : a->shortcuts()) {
+                shortcuts.append(ks.toString());
+            }
+            o["shortcuts"] = shortcuts;
+            o["enabled"] = a->isEnabled();
+            o["checkable"] = a->isCheckable();
+            o["checked"] = a->isChecked();
+            o["role"] = "none";
+            actions.append(o);
+            path.removeLast();
+        }
+    }
+
+    QJsonObject result;
+    result["actions"] = actions;
+    reply(result, nullptr);
 }
 
 void HandleWindowScreenshot(MainWindow* w, const QJsonObject& args, const Reply& reply) {
@@ -397,6 +478,84 @@ void HandleEditorGetCursor(MainWindow* w, const QJsonObject&, const Reply& reply
     QJsonArray sel; sel.append(s); sel.append(en);
     o["selection"] = sel;
     reply(o, nullptr);
+}
+
+void HandleEditorPosFromLineCol(MainWindow* w, const QJsonObject& args, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    const int line = args.value("line").toInt();
+    const int col = args.value("col").toInt();
+    QJsonObject o;
+    o["pos"] = e->posFromLineCol(line, col);
+    reply(o, nullptr);
+}
+
+void HandleDocStatePath(MainWindow*, const QJsonObject&, const Reply& reply) {
+    // Exposed so tests can find document-state.json in a sandboxed HOME.
+    QJsonObject o;
+    o["path"] = DocumentStateStore::instance().filePath();
+    reply(o, nullptr);
+}
+
+void HandleEditorState(MainWindow* w, const QJsonObject&, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    QJsonObject o;
+    o["wrap"] = e->isWordWrap();
+    const char* wo = "default";
+    switch (e->wrapOverride()) {
+    case EditorView::WrapOverride::Default: wo = "default"; break;
+    case EditorView::WrapOverride::On:      wo = "on";      break;
+    case EditorView::WrapOverride::Off:     wo = "off";     break;
+    }
+    o["wrapOverride"] = wo;
+    // Scroll position: the document line at the top of the view.
+    if (ScintillaEdit* sci = e->sciWidget()) {
+        const int firstVisible = static_cast<int>(sci->firstVisibleLine());
+        o["topLine"] = static_cast<int>(sci->docLineFromVisible(firstVisible));
+        o["xOffset"] = static_cast<int>(sci->xOffset());
+    }
+    reply(o, nullptr);
+}
+
+void HandleEditorFolds(MainWindow* w, const QJsonObject& args, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    ScintillaEdit* sci = e->sciWidget();
+    if (!sci) { reply(QJsonArray(), nullptr); return; }
+    // Force a full re-lex so fold levels are up to date, unless the caller
+    // explicitly asks for the incremental levels (used by the fuzz test).
+    if (args.value("force_relex").toInt(1) != 0)
+        sci->colourise(0, -1);
+    QJsonArray folds;
+    const int lineCount = static_cast<int>(sci->lineCount());
+    for (int line = 0; line < lineCount; ++line) {
+        const int level = static_cast<int>(sci->foldLevel(line));
+        const bool header = (level & SC_FOLDLEVELHEADERFLAG) != 0;
+        const bool expanded = sci->foldExpanded(line);
+        if (header) {
+            folds.append(QJsonObject{
+                {"line", line},
+                {"level", level & SC_FOLDLEVELNUMBERMASK},
+                {"header", true},
+                {"expanded", expanded}
+            });
+        }
+    }
+    reply(folds, nullptr);
+}
+
+void HandleEditorFold(MainWindow* w, const QJsonObject& args, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    ScintillaEdit* sci = e->sciWidget();
+    if (!sci) { ReplyErr(reply, "no_editor", "editor unavailable"); return; }
+    const int line = args.value("line").toInt();
+    const QString action = args.value("action").toString("toggle");
+    if (action == "contract") sci->foldLine(line, SC_FOLDACTION_CONTRACT);
+    else if (action == "expand") sci->foldLine(line, SC_FOLDACTION_EXPAND);
+    else sci->foldLine(line, SC_FOLDACTION_TOGGLE);
+    reply(Ok(), nullptr);
 }
 
 void HandleEditorSetCursor(MainWindow* w, const QJsonObject& args, const Reply& reply) {
@@ -1218,6 +1377,49 @@ void HandleEditorCallTip(MainWindow* w, const QJsonObject&, const Reply& reply) 
     reply(QJsonObject{{"text", e->callTipText()}}, nullptr);
 }
 
+void HandleFindState(MainWindow* w, const QJsonObject&, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    const auto s = e->findState();
+    QJsonObject obj;
+    obj["open"] = s.open;
+    obj["query"] = s.query;
+    obj["matchCase"] = s.matchCase;
+    obj["wholeWord"] = s.wholeWord;
+    obj["regex"] = s.regex;
+    obj["inSelection"] = s.inSelection;
+    obj["count"] = s.count;
+    obj["current"] = s.current;
+    obj["error"] = s.error;
+    reply(obj, nullptr);
+}
+
+void HandleFindSet(MainWindow* w, const QJsonObject& args, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    const QString query = args.value("query").toString();
+    const bool matchCase = args.value("matchCase").toBool(false);
+    const bool wholeWord = args.value("wholeWord").toBool(false);
+    const bool regex = args.value("regex").toBool(false);
+    const bool inSelection = args.value("inSelection").toBool(false);
+    e->setFindQuery(query, matchCase, wholeWord, regex, inSelection);
+    const auto s = e->findState();
+    QJsonObject obj;
+    obj["count"] = s.count;
+    obj["current"] = s.current;
+    obj["error"] = s.error;
+    reply(obj, nullptr);
+}
+
+void HandleFindReplace(MainWindow* w, const QJsonObject& args, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    const QString replacement = args.value("replacement").toString();
+    const bool all = args.value("all").toBool(false);
+    int count = all ? e->replaceAll(replacement) : e->replaceCurrent(replacement);
+    reply(QJsonObject{{"replaced", count}}, nullptr);
+}
+
 void HandleLangSet(MainWindow* w, const QJsonObject& args, const Reply& reply) {
     EditorView* e = RequireEditor(w, reply);
     if (!e) return;
@@ -1737,6 +1939,7 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "window.geometry")      { HandleWindowGeometry(w, args, reply); return; }
     if (cmd == "window.set_splitter")  { HandleWindowSetSplitter(w, args, reply); return; }
     if (cmd == "menu.invoke")          { HandleMenuInvoke(w, args, reply); return; }
+    if (cmd == "menu.list")            { HandleMenuList(w, args, reply); return; }
     if (cmd == "window.screenshot")    { HandleWindowScreenshot(w, args, reply); return; }
 
     if (cmd == "editor.open")          { HandleEditorOpen(w, args, reply); return; }
@@ -1748,9 +1951,13 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "editor.get_text")      { HandleEditorGetText(w, args, reply); return; }
     if (cmd == "editor.get_cursor")    { HandleEditorGetCursor(w, args, reply); return; }
     if (cmd == "editor.set_cursor")    { HandleEditorSetCursor(w, args, reply); return; }
+    if (cmd == "editor.pos_from_linecol") { HandleEditorPosFromLineCol(w, args, reply); return; }
     if (cmd == "editor.get_selection") { HandleEditorGetSelection(w, args, reply); return; }
     if (cmd == "editor.set_selection") { HandleEditorSetSelection(w, args, reply); return; }
     if (cmd == "editor.get_style_at")  { HandleEditorGetStyleAt(w, args, reply); return; }
+    if (cmd == "editor.state")         { HandleEditorState(w, args, reply); return; }
+    if (cmd == "editor.folds")         { HandleEditorFolds(w, args, reply); return; }
+    if (cmd == "editor.fold")          { HandleEditorFold(w, args, reply); return; }
     if (cmd == "editor.is_read_only")  { HandleEditorIsReadOnly(w, args, reply); return; }
     if (cmd == "editor.rename_input")  { HandleEditorRenameInput(w, args, reply); return; }
     if (cmd == "editor.begin_rename")  { HandleEditorBeginRename(w, args, reply); return; }
@@ -1786,6 +1993,10 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "lang.bases")           { HandleLangBases(w, args, reply); return; }
     if (cmd == "lang.get")             { HandleLangGet(w, args, reply); return; }
     if (cmd == "editor.call_tip")      { HandleEditorCallTip(w, args, reply); return; }
+    if (cmd == "find.state")           { HandleFindState(w, args, reply); return; }
+    if (cmd == "find.set")             { HandleFindSet(w, args, reply); return; }
+    if (cmd == "find.replace")         { HandleFindReplace(w, args, reply); return; }
+    if (cmd == "doc_state.path")       { HandleDocStatePath(w, args, reply); return; }
     if (cmd == "lang.set")             { HandleLangSet(w, args, reply); return; }
     if (cmd == "lang.menu")            { HandleLangMenu(w, args, reply); return; }
     if (cmd == "lang.set_session")     { HandleLangSetSession(w, args, reply); return; }

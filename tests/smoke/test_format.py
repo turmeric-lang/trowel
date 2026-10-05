@@ -10,7 +10,7 @@ than silently rewritten into s-expressions.
 import subprocess
 from pathlib import Path
 
-FORMAT = ["Run", "Format File"]
+FORMAT = ["Edit", "Format File"]
 
 
 def tur_fmt(tur: str, text: str, lang: str) -> str:

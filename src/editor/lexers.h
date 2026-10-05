@@ -39,6 +39,11 @@ enum class Language : int {
     // map onto which of these.
     R7rs,
     R7rsSweet,
+    // Plain text: no highlighting, no line comment.  `.txt`, `.text`, `.rst`,
+    // `.adoc`, `.org`, and common extensionless names like LICENSE, COPYING.
+    // The fallback for unknown files stays Turmeric, so extensionless Turmeric
+    // scripts and shebang files are not misclassified.
+    PlainText,
 
     // Keep last: the count, which the Markdown guest field's width is asserted
     // against in lexer_adapter.cpp. The guest field is four bits with 15 as its
@@ -245,6 +250,14 @@ inline constexpr int kRainbowLevels = 7;
 // Highest style id any scanner can emit (inclusive). EditorView applies the
 // editor font across 0..kMaxStyleId.
 inline constexpr int kMaxStyleId = static_cast<int>(PyStyle::Identifier);
+
+// The line-comment token for `lang`, or empty when the language has no
+// line comment (JSON, Markdown, PlainText).  Used by Edit > Toggle Comment.
+QByteArray LineCommentToken(Language lang);
+
+// Whether `lang` has a fold strategy (bracket depth, indentation, or
+// headings).  Languages without a strategy get no fold margin.
+bool HasFoldStrategy(Language lang);
 
 // Construct a fresh lexer for `lang`. Ownership passes to Scintilla — release
 // happens via ILexer5::Release(). When `rainbow` is true, brackets are styled

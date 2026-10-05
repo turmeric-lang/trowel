@@ -2,6 +2,8 @@
 
 #include "app/tab_content.h"
 #include "editor/dialect.h"
+#include "editor/find_bar.h"
+#include "editor/find_engine.h"
 #include "editor/lexers.h"
 #include "lsp/lsp_diagnostic.h"
 #include "lsp/lsp_location.h"
@@ -79,6 +81,13 @@ namespace bracketguide {
 constexpr int kIndicator = 12;
 }
 
+// Find/replace match highlighting. 11 was left free for the occurrence split,
+// and 13 is the next free slot above the bracket guide.
+namespace find {
+constexpr int kMatchIndicator = 11;       // all matches
+constexpr int kCurrentIndicator = 13;     // the current match (stronger)
+}
+
 // Debugger markers. Markers 0-1 are diagnostics, 25-31 are folding, so 2-7 are
 // free.
 //
@@ -133,6 +142,29 @@ public:
     // Toggle rainbow (depth-colored) brackets and re-lex the whole document.
     void setRainbowBrackets(bool enabled);
     bool rainbowBrackets() const { return rainbow_; }
+
+    // --- Word wrap (Phase 4) ---
+    // Per-buffer wrap override: Default uses the setting for the buffer's
+    // language class (prose vs code); On/Off force it.
+    enum class WrapOverride { Default, On, Off };
+    void setWrapOverride(WrapOverride wo);
+    WrapOverride wrapOverride() const { return wrapOverride_; }
+    bool isWordWrap() const;  // effective wrap state after override + setting
+    void toggleWordWrap();    // cycles Default -> On -> Off -> Default
+
+    // Re-apply wrap from settings + override. Called when the setting changes
+    // or the language changes.
+    void applyWrap();
+
+    // --- Folding (Phase 5) ---
+    bool hasFolding() const;  // current language has a fold strategy
+    void applyFoldMargin();   // show/hide fold margin based on language
+    void foldCurrent();       // fold innermost region containing the caret
+    void unfoldCurrent();    // unfold region at the caret
+    void toggleFold();       // toggle fold at caret
+    void foldAll();           // fold every region at every level
+    void unfoldAll();         // unfold everything
+    void foldTopLevel();      // fold only base-level regions
 
     // The bracket pair enclosing `pos`, or a pair of -1s when there is none.
     //
@@ -328,6 +360,37 @@ public:
     bool renameInputVisible() const;
     QString renameInputText() const;
 
+    // --- Find / Replace (Phase 3) ---
+    void showFind(bool replace);
+    void hideFind();
+    bool findBarVisible() const;
+    void findNext();
+    void findPrevious();
+    void useSelectionForFind();
+    void selectAllOccurrences();
+    // Control API: set query and flags without touching the widget.
+    void setFindQuery(const QString& text, bool matchCase, bool wholeWord,
+                      bool regex, bool inSelection);
+    // Control API: replace current match, or all matches.
+    int replaceCurrent(const QString& replacement);
+    int replaceAll(const QString& replacement);
+    // Control API: read find state.
+    struct FindState {
+        bool open = false;
+        QString query;
+        bool matchCase = false;
+        bool wholeWord = false;
+        bool regex = false;
+        bool inSelection = false;
+        int count = 0;
+        int current = -1;
+        QString error;
+    };
+    FindState findState() const;
+    // Reveal a document line, unfolding if needed (Phase 5 fills in the
+    // unfold; for now it is a thin wrapper around scrollRange).
+    void revealLine(int line);
+
     // Make this buffer unwritable. Used for stdlib files opened by a definition
     // jump: they live inside the app bundle, where an edit either invalidates
     // the code signature or is lost at the next upgrade. A lock is the honest
@@ -409,11 +472,18 @@ private:
     // document as it stands now.
     std::pair<int, int> rangeForDiagnostic(const LspDiagnostic& d) const;
 
+    // Find/replace helpers.
+    void runFindSearch();
+    void highlightFindMatches();
+    void selectCurrentMatch();
+    void clearFindHighlights();
+
     ScintillaEdit* sci_;
     QString path_;
     QFont currentFont_;
     bool rainbow_ = true;
     Language language_ = Language::Turmeric;
+    WrapOverride wrapOverride_ = WrapOverride::Default;
     int docVersion_ = 0;
     QVector<LspDiagnostic> diagnostics_;
     // The list currently on screen, kept so a selection can be mapped back to
@@ -428,6 +498,12 @@ private:
     QStringList chooserRows_;
     QString callTipText_;
     QLineEdit* renameInput_ = nullptr;
+    FindBar* findBar_ = nullptr;
+    FindQuery findQuery_;
+    FindResult findResult_;
+    int findSelectionStart_ = 0;
+    int findSelectionEnd_ = 0;
+    QTimer* findDebounce_ = nullptr;
     bool bracketGuides_ = true;
     BracketGuideOverlay* guideOverlay_ = nullptr;
     // The pair the overlay is currently drawing, kept so it can be repositioned

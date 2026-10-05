@@ -87,6 +87,8 @@ void ScanJsonLine(const ScanInput& in, LexState& st, Emitter& out) {
             int style = static_cast<int>(JsonStyle::Operator);
             if (st.jsonDepth > 0) {
                 --st.jsonDepth;
+                if (st.jsonDepth < st.minBracketDepth)
+                    st.minBracketDepth = st.jsonDepth;
                 if (in.rainbow) style = static_cast<int>(RainbowStyleForDepth(st.jsonDepth));
             } else if (in.rainbow) {
                 style = static_cast<int>(TurStyle::BracketError);

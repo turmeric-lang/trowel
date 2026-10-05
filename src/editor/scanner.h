@@ -62,6 +62,11 @@ struct LexState {
     int turBlockDepth = 0;    // nested #| |# depth, capped
     int turDcDepth = 0;       // nested #; datum-comment depth, capped
     int turBracketDepth = 0;  // bracket nesting, for rainbow coloring
+    // Minimum bracket depth reached on the current line.  Not packed into
+    // line state (the 31 bits are full); used only within Lex() to compute
+    // fold levels.  Initialized to the depth at line start before each
+    // ScanLine call, updated by the scanner on each closer.
+    int minBracketDepth = 0;
     bool turInString = false;
     bool turInCBlock = false;
     bool turInDatumComment = false;

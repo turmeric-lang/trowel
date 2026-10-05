@@ -1,8 +1,9 @@
 #include "app/main_window.h"
 
 #include "app/directory_view.h"
+#include "app/document_state.h"
 #include "app/icon_font.h"
-#include "app/preferences_view.h"
+#include "app/settings.h"
 #include "app/tab_bar.h"
 #include "app/tab_content.h"
 #include "app/window_manager.h"
@@ -12,8 +13,10 @@
 #include "debug/debugger_view.h"
 #include "debug/timeline_strip.h"
 #include "editor/editor_view.h"
+#include "editor/lexers.h"
 #include "editor/theme_loader.h"
 #include "lsp/lsp_manager.h"
+#include "platform/shortcuts.h"
 #include "repl/project_runner.h"
 #include "trace/trace_runner.h"
 #include "repl/repl_session.h"
@@ -34,8 +37,6 @@
 #include <QActionGroup>
 #include <QFileInfo>
 #include <QFont>
-#include <QFontDatabase>
-#include <QFontDialog>
 #include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
@@ -54,6 +55,9 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QDesktopServices>
+
+#include <trowel/build_info.h>
 
 #include <algorithm>
 
@@ -61,13 +65,6 @@ namespace trowel {
 
 namespace {
 
-// The shortcut for Go to Diagnostic Source, named once because the status-bar
-// framing for a dependency error quotes it -- a hint that spells a different
-// key than the menu does is worse than no hint.
-//
-// Shift+F12 rather than something near F12: it reads as "the other F12 jump",
-// and F12 itself is Go to Definition.
-constexpr const char* kGoToDiagnosticSourceShortcut = "Shift+F12";
 // Depth of the Back stack. Deep enough that a normal exploration session never
 // hits it, shallow enough that it stays a navigation aid rather than a log.
 constexpr int kNavHistoryMax = 20;
@@ -75,13 +72,30 @@ constexpr int kNavHistoryMax = 20;
 // rename is the most destructive thing this editor can do, and the number of
 // files is the only advance warning the user gets about how far it reaches.
 constexpr int kRenameConfirmThreshold = 20;
+
+// Create a QAction owned by `parent`, set its text, shortcuts, and menu role.
+// NoRole by default: only AboutRole, PreferencesRole, and QuitRole are set
+// explicitly on the three actions that should move to the macOS app menu.
+QAction* MakeAction(const QString& text, Command cmd, QObject* parent) {
+    auto* a = new QAction(text, parent);
+    a->setShortcuts(ShortcutsFor(cmd));
+    a->setMenuRole(QAction::NoRole);
+    return a;
+}
+
+// Like MakeAction but sets a specific menu role (for the macOS app menu).
+QAction* MakeActionWithRole(const QString& text, Command cmd,
+                            QAction::MenuRole role, QObject* parent) {
+    auto* a = MakeAction(text, cmd, parent);
+    a->setMenuRole(role);
+    return a;
+}
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
-    const QString preferred = QFontDatabase::hasFamily("Iosevka") ? "Iosevka" : "Menlo";
-    editorFont_ = QSettings().value("editorFont", QFont(preferred, 12)).value<QFont>();
+    editorFont_ = Settings::instance().editorFont();
 
     setupUi();
     setupMenus();
@@ -90,6 +104,10 @@ MainWindow::MainWindow(QWidget* parent)
     updateEditorActionsEnabled();
     updateNavActionsEnabled();
     updateWindowTitle();
+
+    connect(&Settings::instance(), &Settings::changed,
+            this, &MainWindow::onSettingsChanged);
+
     // No buffers and no REPL yet — see startSession().
 }
 
@@ -236,119 +254,417 @@ void MainWindow::setupUi() {
 }
 
 void MainWindow::setupMenus() {
+    // --- File menu --------------------------------------------------------
     auto* fileMenu = menuBar()->addMenu("&File");
 
-    auto* newAction = fileMenu->addAction("&New");
-    newAction->setShortcut(QKeySequence::New);
+    auto* newAction = MakeAction("&New", Command::New, this);
     connect(newAction, &QAction::triggered, this, &MainWindow::newFile);
+    fileMenu->addAction(newAction);
 
-    auto* newWindowAction = fileMenu->addAction("New &Window");
-    newWindowAction->setShortcut(QKeySequence("Ctrl+Shift+N"));
+    auto* newWindowAction = MakeAction("New &Window", Command::NewWindow, this);
     connect(newWindowAction, &QAction::triggered, this, &MainWindow::newWindow);
+    fileMenu->addAction(newWindowAction);
 
-    auto* openAction = fileMenu->addAction("&Open…");
-    openAction->setShortcut(QKeySequence::Open);
+    auto* openAction = MakeAction("&Open…", Command::Open, this);
     connect(openAction, &QAction::triggered, this, &MainWindow::openFile);
+    fileMenu->addAction(openAction);
 
-    auto* openDirAction = fileMenu->addAction("Open &Directory…");
-    openDirAction->setShortcut(QKeySequence("Ctrl+Shift+O"));
+    auto* openDirAction = MakeAction("Open &Directory…", Command::OpenDirectory, this);
     connect(openDirAction, &QAction::triggered, this, &MainWindow::openDirectoryDialog);
+    fileMenu->addAction(openDirAction);
 
     recentMenu_ = fileMenu->addMenu("Open &Recent");
     rebuildRecentMenu();
 
     fileMenu->addSeparator();
 
-    saveAction_ = fileMenu->addAction("&Save");
-    saveAction_->setShortcut(QKeySequence::Save);
+    saveAction_ = MakeAction("&Save", Command::Save, this);
     connect(saveAction_, &QAction::triggered, this, [this]{ save(); });
+    fileMenu->addAction(saveAction_);
 
-    saveAsAction_ = fileMenu->addAction("Save &As…");
-    saveAsAction_->setShortcut(QKeySequence::SaveAs);
+    saveAsAction_ = MakeAction("Save &As…", Command::SaveAs, this);
     connect(saveAsAction_, &QAction::triggered, this, [this]{ saveAs(); });
+    fileMenu->addAction(saveAsAction_);
 
     fileMenu->addSeparator();
 
-    auto* closeTabAction = fileMenu->addAction("&Close Tab");
-    closeTabAction->setShortcut(QKeySequence("Ctrl+W"));
+    auto* closeTabAction = MakeAction("&Close Tab", Command::CloseTab, this);
     connect(closeTabAction, &QAction::triggered, this, &MainWindow::closeCurrentTab);
+    fileMenu->addAction(closeTabAction);
 
-    auto* closeWindowAction = fileMenu->addAction("Close Win&dow");
-    closeWindowAction->setShortcut(QKeySequence("Ctrl+Shift+W"));
+    auto* closeWindowAction = MakeAction("Close Win&dow", Command::CloseWindow, this);
     connect(closeWindowAction, &QAction::triggered, this, &QMainWindow::close);
+    fileMenu->addAction(closeWindowAction);
 
     fileMenu->addSeparator();
 
-    auto* quitAction = fileMenu->addAction("&Quit");
-    quitAction->setShortcut(QKeySequence::Quit);
+#ifdef Q_OS_WIN
+    auto* quitAction = MakeAction("E&xit", Command::Quit, this);
+#else
+    auto* quitAction = MakeActionWithRole("&Quit", Command::Quit,
+                                           QAction::QuitRole, this);
+#endif
     connect(quitAction, &QAction::triggered, this, &MainWindow::quitApp);
+    fileMenu->addAction(quitAction);
 
-    menuBar()->addMenu("&Edit");
+    // --- Edit menu --------------------------------------------------------
+    auto* editMenu = menuBar()->addMenu("&Edit");
 
+    undoAction_ = MakeAction("&Undo", Command::Undo, this);
+    connect(undoAction_, &QAction::triggered, this, [this]{
+        EditorView* v = editorView();
+        if (v && v->sciWidget()) v->sciWidget()->undo();
+    });
+    editMenu->addAction(undoAction_);
+
+    redoAction_ = MakeAction("&Redo", Command::Redo, this);
+    connect(redoAction_, &QAction::triggered, this, [this]{
+        EditorView* v = editorView();
+        if (v && v->sciWidget()) v->sciWidget()->redo();
+    });
+    editMenu->addAction(redoAction_);
+
+    editMenu->addSeparator();
+
+    cutAction_ = MakeAction("Cu&t", Command::Cut, this);
+    connect(cutAction_, &QAction::triggered, this, [this]{
+        if (terminal_ && terminal_->hasFocus()) { terminal_->cut(); return; }
+        EditorView* v = editorView();
+        if (v && v->sciWidget()) v->sciWidget()->cut();
+    });
+    editMenu->addAction(cutAction_);
+
+    copyAction_ = MakeAction("&Copy", Command::Copy, this);
+    connect(copyAction_, &QAction::triggered, this, [this]{
+        if (terminal_ && terminal_->hasFocus()) { terminal_->copy(); return; }
+        EditorView* v = editorView();
+        if (v && v->sciWidget()) v->sciWidget()->copy();
+    });
+    editMenu->addAction(copyAction_);
+
+    pasteAction_ = MakeAction("&Paste", Command::Paste, this);
+    connect(pasteAction_, &QAction::triggered, this, [this]{
+        if (terminal_ && terminal_->hasFocus()) { terminal_->paste(); return; }
+        EditorView* v = editorView();
+        if (v && v->sciWidget()) v->sciWidget()->paste();
+    });
+    editMenu->addAction(pasteAction_);
+
+    selectAllAction_ = MakeAction("Select &All", Command::SelectAll, this);
+    connect(selectAllAction_, &QAction::triggered, this, [this]{
+        if (terminal_ && terminal_->hasFocus()) { terminal_->selectAll(); return; }
+        EditorView* v = editorView();
+        if (v && v->sciWidget()) v->sciWidget()->selectAll();
+    });
+    editMenu->addAction(selectAllAction_);
+
+    editMenu->addSeparator();
+
+    // Find submenu (Phase 3).
+    auto* findMenu = editMenu->addMenu("Find");
+    {
+        auto* findAction = MakeAction("Find…", Command::Find, this);
+        connect(findAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->showFind(false);
+        });
+        findMenu->addAction(findAction);
+
+        auto* findReplaceAction = MakeAction("Find and Replace…", Command::FindReplace, this);
+        connect(findReplaceAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->showFind(true);
+        });
+        findMenu->addAction(findReplaceAction);
+
+        findMenu->addSeparator();
+
+        auto* findNextAction = MakeAction("Find Next", Command::FindNext, this);
+        connect(findNextAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->findNext();
+        });
+        findMenu->addAction(findNextAction);
+
+        auto* findPrevAction = MakeAction("Find Previous", Command::FindPrevious, this);
+        connect(findPrevAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->findPrevious();
+        });
+        findMenu->addAction(findPrevAction);
+
+#ifdef Q_OS_MACOS
+        auto* useSelForFind = MakeAction("Use Selection for Find", Command::UseSelectionForFind, this);
+        connect(useSelForFind, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->useSelectionForFind();
+        });
+        findMenu->addAction(useSelForFind);
+#endif
+
+        findMenu->addSeparator();
+
+        auto* selectAllOcc = MakeAction("Select All Occurrences", Command::SelectAllOccurrences, this);
+        connect(selectAllOcc, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->selectAllOccurrences();
+        });
+        findMenu->addAction(selectAllOcc);
+    }
+
+    editMenu->addSeparator();
+
+    toggleCommentAction_ = MakeAction("Toggle &Comment", Command::ToggleComment, this);
+    connect(toggleCommentAction_, &QAction::triggered, this, &MainWindow::toggleComment);
+    editMenu->addAction(toggleCommentAction_);
+
+    indentAction_ = MakeAction("&Indent", Command::Indent, this);
+    connect(indentAction_, &QAction::triggered, this, &MainWindow::indentSelection);
+    editMenu->addAction(indentAction_);
+
+    outdentAction_ = MakeAction("&Outdent", Command::Outdent, this);
+    connect(outdentAction_, &QAction::triggered, this, &MainWindow::outdentSelection);
+    editMenu->addAction(outdentAction_);
+
+    formatFileAction_ = MakeAction("&Format File", Command::FormatFile, this);
+    formatFileAction_->setToolTip("Format file with `tur fmt`");
+    connect(formatFileAction_, &QAction::triggered, this, &MainWindow::formatFile);
+    editMenu->addAction(formatFileAction_);
+
+    editMenu->addSeparator();
+
+    completeAction_ = MakeAction("Complete S&ymbol", Command::CompleteSymbol, this);
+    completeAction_->setToolTip("Suggest completions at the caret");
+    connect(completeAction_, &QAction::triggered, this, &MainWindow::requestCompletion);
+    editMenu->addAction(completeAction_);
+
+    showDocAction_ = MakeAction("Show &Documentation", Command::ShowDocumentation, this);
+    showDocAction_->setToolTip("Show the type and docstring of the symbol at the caret");
+    connect(showDocAction_, &QAction::triggered, this, &MainWindow::showDocumentation);
+    editMenu->addAction(showDocAction_);
+
+    signatureHelpAction_ = MakeAction("Show Signature &Help", Command::ShowSignatureHelp, this);
+    signatureHelpAction_->setToolTip(
+        "Show the parameter list of the call the caret is inside");
+    connect(signatureHelpAction_, &QAction::triggered, this,
+            &MainWindow::showSignatureHelp);
+    editMenu->addAction(signatureHelpAction_);
+
+    renameAction_ = MakeAction("Re&name Symbol…", Command::RenameSymbol, this);
+    renameAction_->setToolTip("Rename the symbol at the caret across the workspace");
+    connect(renameAction_, &QAction::triggered, this, &MainWindow::renameSymbol);
+    editMenu->addAction(renameAction_);
+
+#ifndef Q_OS_MACOS
+    // On Linux and Windows, Settings and Turmeric Settings go at the bottom
+    // of the Edit menu (GNOME convention).
+    editMenu->addSeparator();
+
+    settingsAction_ = MakeAction("&Settings…", Command::Settings, this);
+    connect(settingsAction_, &QAction::triggered, this, &MainWindow::openSettings);
+    editMenu->addAction(settingsAction_);
+
+    turmericSettingsAction_ = MakeAction("Turmeric Settings…", Command::TurmericSettings, this);
+    connect(turmericSettingsAction_, &QAction::triggered, this,
+            [this]{ openSettingsDirectory(".config/turmeric"); });
+    editMenu->addAction(turmericSettingsAction_);
+#endif
+
+    // Update Edit action enabled state on focus changes and before the menu
+    // opens, so Undo/Redo/Cut/Copy reflect whichever widget has focus.
+    connect(editMenu, &QMenu::aboutToShow, this, &MainWindow::updateEditActionsEnabled);
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget*) {
+        updateEditActionsEnabled();
+    });
+
+    // --- View menu --------------------------------------------------------
     auto* viewMenu = menuBar()->addMenu("&View");
-    pickFontAction_ = viewMenu->addAction("&Font…");
-    pickFontAction_->setShortcut(QKeySequence("Ctrl+,"));
-    connect(pickFontAction_, &QAction::triggered, this, &MainWindow::pickFont);
+
+    toggleReplAction_ = MakeAction("Show REPL", Command::ShowRepl, this);
+    toggleReplAction_->setCheckable(true);
+    toggleReplAction_->setChecked(true);
+    toggleReplAction_->setToolTip("Show/Hide REPL");
+    connect(toggleReplAction_, &QAction::toggled, this, &MainWindow::toggleReplVisible);
+    viewMenu->addAction(toggleReplAction_);
+
+    toggleSplitAction_ = MakeAction("Toggle Split Orientation", Command::ToggleSplit, this);
+    toggleSplitAction_->setToolTip("Toggle REPL position (right / below)");
+    connect(toggleSplitAction_, &QAction::triggered, this, &MainWindow::toggleSplitOrientation);
+    viewMenu->addAction(toggleSplitAction_);
 
     viewMenu->addSeparator();
-    auto* nextTabAction = viewMenu->addAction("Ne&xt Tab");
-    nextTabAction->setShortcut(QKeySequence("Ctrl+Tab"));
+
+    // Word Wrap (Phase 4).
+    wordWrapAction_ = MakeAction("Word Wrap", Command::WordWrap, this);
+    wordWrapAction_->setCheckable(true);
+    connect(wordWrapAction_, &QAction::triggered, this, [this] {
+        if (EditorView* v = editorView()) {
+            v->toggleWordWrap();
+            wordWrapAction_->setChecked(v->isWordWrap());
+        }
+    });
+    viewMenu->addAction(wordWrapAction_);
+
+    // Folding submenu (Phase 5).
+    auto* foldingMenu = viewMenu->addMenu("Folding");
+    {
+        auto* foldAction = MakeAction("Fold", Command::Fold, this);
+        connect(foldAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->foldCurrent();
+        });
+        foldingMenu->addAction(foldAction);
+
+        auto* unfoldAction = MakeAction("Unfold", Command::Unfold, this);
+        connect(unfoldAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->unfoldCurrent();
+        });
+        foldingMenu->addAction(unfoldAction);
+
+        auto* toggleFoldAction = MakeAction("Toggle Fold", Command::ToggleFold, this);
+        connect(toggleFoldAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->toggleFold();
+        });
+        foldingMenu->addAction(toggleFoldAction);
+
+        foldingMenu->addSeparator();
+
+        auto* foldAllAction = MakeAction("Fold All", Command::FoldAll, this);
+        connect(foldAllAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->foldAll();
+        });
+        foldingMenu->addAction(foldAllAction);
+
+        auto* unfoldAllAction = MakeAction("Unfold All", Command::UnfoldAll, this);
+        connect(unfoldAllAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->unfoldAll();
+        });
+        foldingMenu->addAction(unfoldAllAction);
+
+        auto* foldTopAction = MakeAction("Fold Top-Level Forms", Command::FoldTopLevel, this);
+        connect(foldTopAction, &QAction::triggered, this, [this] {
+            if (EditorView* v = editorView()) v->foldTopLevel();
+        });
+        foldingMenu->addAction(foldTopAction);
+    }
+
+    viewMenu->addSeparator();
+
+    zoomInAction_ = MakeAction("Zoom In", Command::ZoomIn, this);
+    connect(zoomInAction_, &QAction::triggered, this, &MainWindow::zoomIn);
+    viewMenu->addAction(zoomInAction_);
+
+    zoomOutAction_ = MakeAction("Zoom Out", Command::ZoomOut, this);
+    connect(zoomOutAction_, &QAction::triggered, this, &MainWindow::zoomOut);
+    viewMenu->addAction(zoomOutAction_);
+
+    actualSizeAction_ = MakeAction("Actual Size", Command::ActualSize, this);
+    connect(actualSizeAction_, &QAction::triggered, this, &MainWindow::actualSize);
+    viewMenu->addAction(actualSizeAction_);
+
+    viewMenu->addSeparator();
+
+    auto* nextTabAction = MakeAction("Ne&xt Tab", Command::NextTab, this);
     connect(nextTabAction, &QAction::triggered, this, &MainWindow::nextTab);
-    auto* prevTabAction = viewMenu->addAction("&Previous Tab");
-    prevTabAction->setShortcut(QKeySequence("Ctrl+Shift+Tab"));
+    viewMenu->addAction(nextTabAction);
+
+    auto* prevTabAction = MakeAction("&Previous Tab", Command::PreviousTab, this);
     connect(prevTabAction, &QAction::triggered, this, &MainWindow::prevTab);
+    viewMenu->addAction(prevTabAction);
 
-    windowMenu_ = menuBar()->addMenu("&Window");
-    // Populated from the registry; also refreshed just before it opens so
-    // window titles are current even if nothing opened or closed.
-    connect(windowMenu_, &QMenu::aboutToShow, this, &MainWindow::rebuildWindowMenu);
-    rebuildWindowMenu();
+    viewMenu->addSeparator();
 
+    fullScreenAction_ = MakeAction("Enter Full Screen", Command::FullScreen, this);
+    fullScreenAction_->setCheckable(true);
+    fullScreenAction_->setChecked(isFullScreen());
+    connect(fullScreenAction_, &QAction::triggered, this, [this]{
+        if (isFullScreen()) showNormal(); else showFullScreen();
+    });
+    viewMenu->addAction(fullScreenAction_);
+
+    // --- Go menu ----------------------------------------------------------
+    auto* goMenu = menuBar()->addMenu("&Go");
+
+    gotoDefinitionAction_ = MakeAction("&Go to Definition", Command::GoToDefinition, this);
+    gotoDefinitionAction_->setToolTip("Jump to where the symbol at the caret is defined");
+    connect(gotoDefinitionAction_, &QAction::triggered, this, &MainWindow::goToDefinition);
+    goMenu->addAction(gotoDefinitionAction_);
+
+    findReferencesAction_ = MakeAction("Find &References", Command::FindReferences, this);
+    findReferencesAction_->setToolTip("List every use of the symbol at the caret");
+    connect(findReferencesAction_, &QAction::triggered, this, &MainWindow::findReferences);
+    goMenu->addAction(findReferencesAction_);
+
+    goMenu->addSeparator();
+
+    outlineAction_ = MakeAction("Show Sy&mbols", Command::ShowSymbols, this);
+    outlineAction_->setToolTip("List the definitions in this file");
+    connect(outlineAction_, &QAction::triggered, this, &MainWindow::showOutline);
+    goMenu->addAction(outlineAction_);
+
+    workspaceSymbolAction_ = MakeAction("Find Symbol in &Project…", Command::FindSymbolInProject, this);
+    workspaceSymbolAction_->setToolTip("Search for a definition across the project");
+    connect(workspaceSymbolAction_, &QAction::triggered, this,
+            &MainWindow::findSymbolInProject);
+    goMenu->addAction(workspaceSymbolAction_);
+
+    goToLineAction_ = MakeAction("Go to Line…", Command::GoToLine, this);
+    connect(goToLineAction_, &QAction::triggered, this, &MainWindow::goToLine);
+    goMenu->addAction(goToLineAction_);
+
+    diagnosticSourceAction_ = MakeAction("Go to Diagnostic &Source", Command::GoToDiagnosticSource, this);
+    diagnosticSourceAction_->setToolTip(
+        "Open the code a dependency error came from");
+    connect(diagnosticSourceAction_, &QAction::triggered, this,
+            &MainWindow::goToDiagnosticSource);
+    goMenu->addAction(diagnosticSourceAction_);
+
+    goMenu->addSeparator();
+
+    navBackAction_ = MakeAction("Go &Back", Command::Back, this);
+    navBackAction_->setToolTip("Return to the position before the last jump");
+    connect(navBackAction_, &QAction::triggered, this, &MainWindow::navigateBack);
+    goMenu->addAction(navBackAction_);
+
+    navForwardAction_ = MakeAction("Go For&ward", Command::Forward, this);
+    navForwardAction_->setToolTip("Redo the jump that Back undid");
+    connect(navForwardAction_, &QAction::triggered, this, &MainWindow::navigateForward);
+    goMenu->addAction(navForwardAction_);
+
+    // --- Run menu ---------------------------------------------------------
     auto* runMenu = menuBar()->addMenu("&Run");
 
-    runBufferAction_ = new QAction("&Run Buffer", this);
-    runBufferAction_->setShortcut(QKeySequence("Ctrl+R"));
+    runBufferAction_ = MakeAction("&Run Buffer", Command::RunBuffer, this);
     runBufferAction_->setToolTip("Evaluate File");
     connect(runBufferAction_, &QAction::triggered, this, &MainWindow::runBuffer);
     runMenu->addAction(runBufferAction_);
 
-    runSelectionAction_ = new QAction("Run &Selection", this);
-    runSelectionAction_->setShortcut(QKeySequence("Ctrl+Shift+E"));
+    runSelectionAction_ = MakeAction("Run &Selection", Command::RunSelection, this);
     runSelectionAction_->setToolTip("Evaluate Selection");
     connect(runSelectionAction_, &QAction::triggered, this, &MainWindow::runSelection);
     runMenu->addAction(runSelectionAction_);
 
-    traceAction_ = new QAction("&Trace Buffer", this);
-    traceAction_->setShortcut(QKeySequence("Ctrl+Shift+T"));
+    traceAction_ = MakeAction("&Trace Buffer", Command::TraceBuffer, this);
     traceAction_->setToolTip("Record an execution trace with `tur trace`");
     connect(traceAction_, &QAction::triggered, this, &MainWindow::traceBuffer);
     runMenu->addAction(traceAction_);
 
-    debugAction_ = new QAction("&Debug Buffer", this);
-    debugAction_->setShortcut(QKeySequence("F5"));
+    runMenu->addSeparator();
+
+    debugAction_ = MakeAction("&Debug Buffer", Command::DebugBuffer, this);
     debugAction_->setToolTip(
         "Run the current file under the interpreter debugger (`tur dap`)");
     connect(debugAction_, &QAction::triggered, this, &MainWindow::debugOrContinue);
     runMenu->addAction(debugAction_);
 
-    replayAction_ = new QAction("Time-Travel Debu&g", this);
-    replayAction_->setShortcut(QKeySequence("Ctrl+F5"));
+    replayAction_ = MakeAction("Time-Travel Debu&g", Command::TimeTravelDebug, this);
     replayAction_->setToolTip(
         "Record the run, then step through it in both directions "
         "(`tur dap` with a recording)");
     connect(replayAction_, &QAction::triggered, this, &MainWindow::replayBuffer);
     runMenu->addAction(replayAction_);
 
-    restartDebugAction_ = new QAction("Restart Debug S&ession", this);
-    restartDebugAction_->setShortcut(QKeySequence("Ctrl+Shift+F5"));
+    restartDebugAction_ = MakeAction("Restart Debug S&ession", Command::RestartDebug, this);
     restartDebugAction_->setToolTip(
         "Respawn the debug session — `tur dap` runs one program per session, "
         "so a restart is a fresh process");
     connect(restartDebugAction_, &QAction::triggered, this, &MainWindow::restartDebug);
     runMenu->addAction(restartDebugAction_);
 
-    toggleBreakpointAction_ = new QAction("Toggle &Breakpoint", this);
-    toggleBreakpointAction_->setShortcut(QKeySequence("F9"));
+    toggleBreakpointAction_ = MakeAction("Toggle &Breakpoint", Command::ToggleBreakpoint, this);
     toggleBreakpointAction_->setToolTip(
         "Set or clear a breakpoint on the caret's line (or click the gutter)");
     connect(toggleBreakpointAction_, &QAction::triggered,
@@ -357,132 +673,25 @@ void MainWindow::setupMenus() {
 
     runMenu->addSeparator();
 
-    restartReplAction_ = new QAction("Res&tart REPL", this);
-    restartReplAction_->setShortcut(QKeySequence("Ctrl+Shift+R"));
+    restartReplAction_ = MakeAction("Res&tart REPL", Command::RestartRepl, this);
     restartReplAction_->setToolTip("Restart the REPL in the current file's directory");
     connect(restartReplAction_, &QAction::triggered, this, &MainWindow::restartRepl);
     runMenu->addAction(restartReplAction_);
 
-    auto* restartReplInAction = runMenu->addAction("Restart REPL &In…");
+    auto* restartReplInAction = MakeAction("Restart REPL &In…", Command::RestartReplIn, this);
     restartReplInAction->setToolTip("Pick a directory and restart the REPL there");
     connect(restartReplInAction, &QAction::triggered,
             this, &MainWindow::restartReplInDirectory);
+    runMenu->addAction(restartReplInAction);
 
-    clearReplAction_ = new QAction("&Clear REPL", this);
-    clearReplAction_->setShortcut(QKeySequence("Ctrl+Shift+K"));
+    clearReplAction_ = MakeAction("&Clear REPL", Command::ClearRepl, this);
     clearReplAction_->setToolTip("Clear REPL Output");
     connect(clearReplAction_, &QAction::triggered, this, &MainWindow::clearRepl);
     runMenu->addAction(clearReplAction_);
 
-    formatFileAction_ = new QAction("&Format File", this);
-    formatFileAction_->setShortcut(QKeySequence("Ctrl+Shift+F"));
-    formatFileAction_->setToolTip("Format file with `tur fmt`");
-    connect(formatFileAction_, &QAction::triggered, this, &MainWindow::formatFile);
-    runMenu->addAction(formatFileAction_);
-
-    runMenu->addSeparator();
-
-    completeAction_ = new QAction("Complete S&ymbol", this);
-    completeAction_->setShortcut(QKeySequence("Ctrl+Space"));
-    completeAction_->setToolTip("Suggest completions at the caret");
-    connect(completeAction_, &QAction::triggered, this, &MainWindow::requestCompletion);
-    runMenu->addAction(completeAction_);
-
-    showDocAction_ = new QAction("Show &Documentation", this);
-    showDocAction_->setShortcut(QKeySequence("Ctrl+Shift+D"));
-    showDocAction_->setToolTip("Show the type and docstring of the symbol at the caret");
-    connect(showDocAction_, &QAction::triggered, this, &MainWindow::showDocumentation);
-    runMenu->addAction(showDocAction_);
-
-    // Signature help, beside Show Documentation: the two answer the same
-    // question at different moments, and share the call-tip surface.
-    signatureHelpAction_ = new QAction("Show Signature &Help", this);
-    signatureHelpAction_->setShortcut(QKeySequence("Ctrl+Shift+P"));
-    signatureHelpAction_->setToolTip(
-        "Show the parameter list of the call the caret is inside");
-    connect(signatureHelpAction_, &QAction::triggered, this,
-            &MainWindow::showSignatureHelp);
-    runMenu->addAction(signatureHelpAction_);
-
-    // §6.1 of the navigation plan proposes the Edit menu; Run is where it
-    // actually goes, because that is where Complete Symbol and Show
-    // Documentation already live and Edit is empty. Ctrl+Shift+O is taken by
-    // Open Directory (see :195) and is deliberately not reused.
-    outlineAction_ = new QAction("Show Sy&mbols", this);
-    outlineAction_->setShortcut(QKeySequence("Ctrl+Shift+M"));
-    outlineAction_->setToolTip("List the definitions in this file");
-    connect(outlineAction_, &QAction::triggered, this, &MainWindow::showOutline);
-    runMenu->addAction(outlineAction_);
-
-    // The workspace counterpart of Show Symbols: that one lists this file,
-    // this one searches every file the server has indexed.
-    workspaceSymbolAction_ = new QAction("Find Symbol in &Project…", this);
-    workspaceSymbolAction_->setShortcut(QKeySequence("Ctrl+Shift+T"));
-    workspaceSymbolAction_->setToolTip("Search for a definition across the project");
-    connect(workspaceSymbolAction_, &QAction::triggered, this,
-            &MainWindow::findSymbolInProject);
-    runMenu->addAction(workspaceSymbolAction_);
-
-    diagnosticSourceAction_ = new QAction("Go to Diagnostic &Source", this);
-    diagnosticSourceAction_->setShortcut(QKeySequence(kGoToDiagnosticSourceShortcut));
-    diagnosticSourceAction_->setToolTip(
-        "Open the code a dependency error came from");
-    connect(diagnosticSourceAction_, &QAction::triggered, this,
-            &MainWindow::goToDiagnosticSource);
-    runMenu->addAction(diagnosticSourceAction_);
-
-    gotoDefinitionAction_ = new QAction("&Go to Definition", this);
-    gotoDefinitionAction_->setShortcut(QKeySequence("F12"));
-    gotoDefinitionAction_->setToolTip("Jump to where the symbol at the caret is defined");
-    connect(gotoDefinitionAction_, &QAction::triggered, this, &MainWindow::goToDefinition);
-    runMenu->addAction(gotoDefinitionAction_);
-
-    findReferencesAction_ = new QAction("Find &References", this);
-    findReferencesAction_->setShortcut(QKeySequence("Shift+F12"));
-    findReferencesAction_->setToolTip("List every use of the symbol at the caret");
-    connect(findReferencesAction_, &QAction::triggered, this, &MainWindow::findReferences);
-    runMenu->addAction(findReferencesAction_);
-
-    renameAction_ = new QAction("Re&name Symbol", this);
-    renameAction_->setShortcut(QKeySequence("F2"));
-    renameAction_->setToolTip("Rename the symbol at the caret across the workspace");
-    connect(renameAction_, &QAction::triggered, this, &MainWindow::renameSymbol);
-    runMenu->addAction(renameAction_);
-
-    // Ctrl+Alt+Left/Right is a workspace switcher under several Linux desktops,
-    // so these use VS Code's alternate pair, which nothing here or there claims.
-    navBackAction_ = new QAction("Go &Back", this);
-    navBackAction_->setShortcut(QKeySequence("Ctrl+Alt+-"));
-    navBackAction_->setToolTip("Return to the position before the last jump");
-    connect(navBackAction_, &QAction::triggered, this, &MainWindow::navigateBack);
-    runMenu->addAction(navBackAction_);
-
-    navForwardAction_ = new QAction("Go For&ward", this);
-    navForwardAction_->setShortcut(QKeySequence("Ctrl+Alt+Shift+-"));
-    navForwardAction_->setToolTip("Redo the jump that Back undid");
-    connect(navForwardAction_, &QAction::triggered, this, &MainWindow::navigateForward);
-    runMenu->addAction(navForwardAction_);
-
-    restartLspAction_ = new QAction("Restart &Language Server", this);
-    restartLspAction_->setToolTip("Restart `tur lsp`");
-    connect(restartLspAction_, &QAction::triggered, this, &MainWindow::restartLanguageServer);
-    runMenu->addAction(restartLspAction_);
-
     runMenu->addSeparator();
 
     // --- Dialect picker ---------------------------------------------------
-    //
-    // Grouped by LANGUAGE with a heading each, which is how the Try Turmeric
-    // picker settled after two revisions: a `#lang` base names a (language,
-    // reader) pair, so the list reads as readers under a language rather than
-    // ten flat rows.
-    //
-    // Curly-infix and neoteric are deliberately NOT offered: `{a + b}` is
-    // enabled in every dialect and neoteric is one of sweet-exp's three tools,
-    // so presenting them as dialects of their own misrepresents what they are.
-    // Both stay spellable, and a buffer that names one gets its row back
-    // (rebuildDialectMenu adds it when the current dialect is a hidden one).
-    runMenu->addSeparator();
     dialectMenu_ = runMenu->addMenu("&Dialect");
     dialectGroup_ = new QActionGroup(this);
     dialectGroup_->setExclusive(true);
@@ -491,32 +700,68 @@ void MainWindow::setupMenus() {
         if (!v || !a) return;
         const auto d = static_cast<Dialect>(a->data().toInt());
         if (!v->setLangDirective(d)) {
-            // Already in that dialect and nothing to write -- say so rather
-            // than leaving the click looking like it did nothing.
             statusBar()->show();
             statusBar()->showMessage(
                 QString("Already %1").arg(DialectBaseToken(d)), 2000);
         }
         rebuildDialectMenu();
     });
-    // Rebuilt when the menu opens rather than synced from every signal that
-    // could change the answer (tab switch, Save As to a new extension, the user
-    // typing a `#lang` line). Those are many and the menu is cheap, so "ask at
-    // the moment it is read" cannot go stale the way a subscription can.
     connect(dialectMenu_, &QMenu::aboutToShow, this, &MainWindow::rebuildDialectMenu);
     rebuildDialectMenu();
 
-    auto* focusEditorAction = runMenu->addAction("Focus &Editor");
-    focusEditorAction->setShortcut(QKeySequence("Ctrl+E"));
-    connect(focusEditorAction, &QAction::triggered, this, &MainWindow::focusEditor);
+    restartLspAction_ = MakeAction("Restart &Language Server", Command::RestartLanguageServer, this);
+    restartLspAction_->setToolTip("Restart `tur lsp`");
+    connect(restartLspAction_, &QAction::triggered, this, &MainWindow::restartLanguageServer);
+    runMenu->addAction(restartLspAction_);
 
-    auto* focusReplAction = runMenu->addAction("Focus RE&PL");
-    focusReplAction->setShortcut(QKeySequence("Ctrl+T"));
-    connect(focusReplAction, &QAction::triggered, this, &MainWindow::focusRepl);
+    // --- Window menu ------------------------------------------------------
+    windowMenu_ = menuBar()->addMenu("&Window");
+    connect(windowMenu_, &QMenu::aboutToShow, this, &MainWindow::rebuildWindowMenu);
+    rebuildWindowMenu();
 
-    auto* toggleFocusAction = runMenu->addAction("Toggle REPL/Editor &Focus");
-    toggleFocusAction->setShortcut(QKeySequence("Ctrl+`"));
-    connect(toggleFocusAction, &QAction::triggered, this, &MainWindow::toggleReplEditorFocus);
+    // --- Help menu --------------------------------------------------------
+    auto* helpMenu = menuBar()->addMenu("&Help");
+
+    auto* trowelHelpAction = MakeAction("Trowel Help", Command::TrowelHelp, this);
+    connect(trowelHelpAction, &QAction::triggered, this, &MainWindow::openTrowelHelp);
+    helpMenu->addAction(trowelHelpAction);
+
+    auto* shortcutsAction = MakeAction("Keyboard Shortcuts", Command::KeyboardShortcuts, this);
+    connect(shortcutsAction, &QAction::triggered, this, &MainWindow::openKeyboardShortcuts);
+    helpMenu->addAction(shortcutsAction);
+
+    auto* turmericDocsAction = MakeAction("Turmeric Documentation", Command::TurmericDocumentation, this);
+    connect(turmericDocsAction, &QAction::triggered, this, &MainWindow::openTurmericDocumentation);
+    helpMenu->addAction(turmericDocsAction);
+
+    auto* reportIssueAction = MakeAction("Report an Issue…", Command::ReportIssue, this);
+    connect(reportIssueAction, &QAction::triggered, this, &MainWindow::reportIssue);
+    helpMenu->addAction(reportIssueAction);
+
+    helpMenu->addSeparator();
+
+#ifdef Q_OS_MACOS
+    // On macOS, About goes in the app menu (first menu), not Help.
+    aboutAction_ = MakeActionWithRole("About Trowel", Command::About,
+                                       QAction::AboutRole, this);
+    connect(aboutAction_, &QAction::triggered, this, &MainWindow::showAbout);
+    // Insert the app menu at the front.  Qt creates it from the About action
+    // via the role, so we add it to the menu bar before the File menu.
+    menuBar()->insertAction(menuBar()->actions().first(), aboutAction_);
+    // On macOS, Settings goes in the app menu too.
+    settingsAction_ = MakeActionWithRole("Settings…", Command::Settings,
+                                          QAction::PreferencesRole, this);
+    connect(settingsAction_, &QAction::triggered, this, &MainWindow::openSettings);
+    menuBar()->insertAction(menuBar()->actions().first(), settingsAction_);
+    turmericSettingsAction_ = MakeAction("Turmeric Settings…", Command::TurmericSettings, this);
+    connect(turmericSettingsAction_, &QAction::triggered, this,
+            [this]{ openSettingsDirectory(".config/turmeric"); });
+    menuBar()->insertAction(menuBar()->actions().first(), turmericSettingsAction_);
+#else
+    aboutAction_ = MakeAction("&About Trowel", Command::About, this);
+    connect(aboutAction_, &QAction::triggered, this, &MainWindow::showAbout);
+    helpMenu->addAction(aboutAction_);
+#endif
 }
 
 namespace {
@@ -594,29 +839,25 @@ void MainWindow::setupToolBar() {
 
     addSideBarSeparator();
 
-    toggleSplitAction_ = new QAction("Toggle Split Orientation", this);
-    toggleSplitAction_->setToolTip("Toggle REPL position (right / below)");
-    toggleSplitAction_->setIcon(NerdIcon(NF::ViewSplitHorizontal, glyphSize, iconColor));
-    connect(toggleSplitAction_, &QAction::triggered, this, &MainWindow::toggleSplitOrientation);
-    addSideBarAction(toggleSplitAction_);
+    // Reuse the actions created in setupMenus() so the checked state stays
+    // shared between the menu item and the side-bar button.
+    if (toggleSplitAction_) {
+        toggleSplitAction_->setIcon(NerdIcon(NF::ViewSplitHorizontal, glyphSize, iconColor));
+        addSideBarAction(toggleSplitAction_);
+    }
 
-    toggleReplAction_ = new QAction("Show/Hide REPL", this);
-    toggleReplAction_->setCheckable(true);
-    toggleReplAction_->setChecked(true);
-    toggleReplAction_->setToolTip("Show/Hide REPL");
-    toggleReplAction_->setIcon(NerdIcon(NF::Console, glyphSize, iconColor));
-    connect(toggleReplAction_, &QAction::toggled, this, &MainWindow::toggleReplVisible);
-    addSideBarAction(toggleReplAction_);
+    if (toggleReplAction_) {
+        toggleReplAction_->setIcon(NerdIcon(NF::Console, glyphSize, iconColor));
+        addSideBarAction(toggleReplAction_);
+    }
 
     addSideBarSeparator();
 
+    // The gear's popup menu reuses the same two settings actions from
+    // setupMenus(), keeping the checked state shared.
     auto* settingsMenu = new QMenu(this);
-    auto* trowelSettingsAction = settingsMenu->addAction("Trowel Settings");
-    connect(trowelSettingsAction, &QAction::triggered, this,
-            &MainWindow::openPreferences);
-    auto* turmericSettingsAction = settingsMenu->addAction("Turmeric Settings");
-    connect(turmericSettingsAction, &QAction::triggered, this,
-            [this]{ openSettingsDirectory(".config/turmeric"); });
+    if (settingsAction_) settingsMenu->addAction(settingsAction_);
+    if (turmericSettingsAction_) settingsMenu->addAction(turmericSettingsAction_);
 
     auto* settingsButton = new QToolButton(sideBar_->widget());
     settingsButton->setToolTip("Settings");
@@ -697,9 +938,6 @@ QString MainWindow::computeDisplayName(const Buffer& buf) const {
     if (buf.view && buf.view->kind() == TabContent::Kind::Directory) {
         const QString name = buf.view->displayName();
         return name.isEmpty() ? QStringLiteral("Directory") : name;
-    }
-    if (buf.view && buf.view->kind() == TabContent::Kind::Preferences) {
-        return buf.view->displayName();
     }
     if (buf.view && !buf.view->filePath().isEmpty()) {
         return QFileInfo(buf.view->filePath()).fileName();
@@ -811,7 +1049,7 @@ void MainWindow::showSelectedFrame(int frameId) {
         // cannot follow, and the frames the debugger hands back are all real
         // paths on disk (`dap.c` emits `source.path` in full).
         if (!QFileInfo::exists(it->filePath)) return;
-        if (!openPath(it->filePath)) return;
+        if (!openPath(it->filePath, /*restoreDocState=*/false)) return;
         idx = indexOfPath(it->filePath);
         if (idx < 0) return;
     }
@@ -949,7 +1187,7 @@ void MainWindow::connectBufferSignals(int index) {
     });
 }
 
-MainWindow::Buffer* MainWindow::addBuffer(const QString& path, bool untitledIfEmpty) {
+MainWindow::Buffer* MainWindow::addBuffer(const QString& path, bool untitledIfEmpty, bool restore) {
     auto buf = std::make_unique<Buffer>();
     auto* editor = new EditorView(editorStack_);
     editor->setFont(editorFont_);
@@ -958,6 +1196,7 @@ MainWindow::Buffer* MainWindow::addBuffer(const QString& path, bool untitledIfEm
             delete editor;
             return nullptr;
         }
+        if (restore) restoreDocState(editor);
     } else if (untitledIfEmpty) {
         buf->untitledIndex = nextUntitledIndex();
     }
@@ -972,6 +1211,14 @@ MainWindow::Buffer* MainWindow::addBuffer(const QString& path, bool untitledIfEm
 
 void MainWindow::activateBuffer(int index) {
     if (index < 0 || index >= static_cast<int>(buffers_.size())) return;
+    // Save the outgoing buffer's state before switching.
+    if (activeIndex_ >= 0 && activeIndex_ < static_cast<int>(buffers_.size()) &&
+        activeIndex_ != index) {
+        TabContent* old = buffers_[activeIndex_]->view;
+        if (old && old->kind() == TabContent::Kind::Editor) {
+            saveDocState(static_cast<EditorView*>(old));
+        }
+    }
     activeIndex_ = index;
     editorStack_->setCurrentWidget(buffers_[index]->view);
     if (tabBar_) tabBar_->setActive(index);
@@ -1009,6 +1256,9 @@ void MainWindow::closeBuffer(int index) {
     if (!maybeSaveBuffer(index)) return;
 
     TabContent* view = buffers_[index]->view;
+    if (view && view->kind() == TabContent::Kind::Editor) {
+        saveDocState(static_cast<EditorView*>(view));
+    }
     editorStack_->removeWidget(view);
     if (view) view->deleteLater();
     buffers_.erase(buffers_.begin() + index);
@@ -1043,7 +1293,7 @@ void MainWindow::ensureAtLeastOneBuffer() {
     refreshTabBar();
 }
 
-bool MainWindow::openPath(const QString& path) {
+bool MainWindow::openPath(const QString& path, bool restore) {
     // Already open in this window? Focus that tab instead of making a second
     // one. Deliberately scoped to this window — a file open in *another*
     // window is left alone rather than yanking the user across windows.
@@ -1064,6 +1314,7 @@ bool MainWindow::openPath(const QString& path) {
                     QMessageBox::warning(this, "Trowel", QString("Could not open %1").arg(path));
                     return false;
                 }
+                if (restore) restoreDocState(ev);
                 cur->untitledIndex = 0;
                 updateBufferDisplayName(activeIndex_);
                 rememberRecentFile(path);
@@ -1073,7 +1324,7 @@ bool MainWindow::openPath(const QString& path) {
         }
     }
 
-    Buffer* b = addBuffer(path, /*untitledIfEmpty=*/false);
+    Buffer* b = addBuffer(path, /*untitledIfEmpty=*/false, restore);
     if (!b) {
         QMessageBox::warning(this, "Trowel", QString("Could not open %1").arg(path));
         return false;
@@ -1159,6 +1410,7 @@ bool MainWindow::replaceBufferWithFile(int index, const QString& path) {
         QMessageBox::warning(this, "Trowel", QString("Could not open %1").arg(path));
         return false;
     }
+    restoreDocState(editor);
     editorStack_->addWidget(editor);
     editorStack_->removeWidget(old);
     if (old) old->deleteLater();
@@ -1194,7 +1446,12 @@ void MainWindow::updateEditorActionsEnabled() {
     if (saveAction_) saveAction_->setEnabled(writable);
     if (saveAsAction_) saveAsAction_->setEnabled(hasEditor);
     if (formatFileAction_) formatFileAction_->setEnabled(writable);
-    if (pickFontAction_) pickFontAction_->setEnabled(hasEditor);
+
+    // Word Wrap reflects the active buffer's effective wrap state.
+    if (wordWrapAction_) {
+        wordWrapAction_->setEnabled(hasEditor);
+        wordWrapAction_->setChecked(hasEditor && active->isWordWrap());
+    }
 
     // Evaluation only makes sense for Turmeric documents. A `build.tur` is a
     // Turmeric file but not a script, so the same action turns into "build the
@@ -1326,6 +1583,7 @@ void MainWindow::rebuildRecentMenu() {
     auto* clear = recentMenu_->addAction("Clear Menu");
     connect(clear, &QAction::triggered, this, [this]{
         recentFiles_.clear();
+        DocumentStateStore::instance().clear();
         rebuildRecentMenu();
     });
 }
@@ -1351,21 +1609,6 @@ void MainWindow::loadRecentFiles() {
     rebuildRecentMenu();
 }
 
-void MainWindow::pickFont() {
-    EditorView* v = editorView();
-    if (!v) return;
-    bool ok = false;
-    const QFont chosen = QFontDialog::getFont(&ok, v->currentFont(), this, "Editor Font");
-    if (!ok) return;
-    editorFont_ = chosen;
-    for (auto& b : buffers_) {
-        if (b->view && b->view->kind() == TabContent::Kind::Editor) {
-            static_cast<EditorView*>(b->view)->setFont(chosen);
-        }
-    }
-    QSettings().setValue("editorFont", chosen);
-}
-
 void MainWindow::setWindowManager(WindowManager* windows) {
     windows_ = windows;
     if (windows_) {
@@ -1378,14 +1621,56 @@ void MainWindow::setWindowManager(WindowManager* windows) {
 void MainWindow::rebuildWindowMenu() {
     if (!windowMenu_) return;
     windowMenu_->clear();
+
+#ifdef Q_OS_MACOS
+    minimizeAction_ = MakeAction("Minimize", Command::Minimize, this);
+    connect(minimizeAction_, &QAction::triggered, this, &QWidget::showMinimized);
+    windowMenu_->addAction(minimizeAction_);
+
+    zoomAction_ = MakeAction("Zoom", Command::Zoom, this);
+    connect(zoomAction_, &QAction::triggered, this, [this]{
+        if (isMaximized()) showNormal(); else showMaximized();
+    });
+    windowMenu_->addAction(zoomAction_);
+
+    windowMenu_->addSeparator();
+#endif
+
+    focusEditorAction_ = MakeAction("Focus &Editor", Command::FocusEditor, this);
+    connect(focusEditorAction_, &QAction::triggered, this, &MainWindow::focusEditor);
+    windowMenu_->addAction(focusEditorAction_);
+
+    focusReplAction_ = MakeAction("Focus RE&PL", Command::FocusRepl, this);
+    connect(focusReplAction_, &QAction::triggered, this, &MainWindow::focusRepl);
+    windowMenu_->addAction(focusReplAction_);
+
+    toggleFocusAction_ = MakeAction("Toggle REPL/Editor &Focus", Command::ToggleReplEditorFocus, this);
+    connect(toggleFocusAction_, &QAction::triggered, this, &MainWindow::toggleReplEditorFocus);
+    windowMenu_->addAction(toggleFocusAction_);
+
+#ifdef Q_OS_MACOS
+    windowMenu_->addSeparator();
+    bringAllToFrontAction_ = MakeAction("Bring All to Front", Command::BringAllToFront, this);
+    connect(bringAllToFrontAction_, &QAction::triggered, this, [this]{
+        if (windows_) {
+            for (MainWindow* w : windows_->windows()) {
+                w->show();
+                w->raise();
+                w->activateWindow();
+            }
+        }
+    });
+    windowMenu_->addAction(bringAllToFrontAction_);
+#endif
+
     if (!windows_) return;
+
+    windowMenu_->addSeparator();
 
     for (MainWindow* w : windows_->windows()) {
         QAction* action = windowMenu_->addAction(w->windowTitle());
         action->setCheckable(true);
         action->setChecked(w == this);
-        // `w` as the context object: if that window goes away, so does the
-        // connection, and the menu is rebuilt anyway.
         connect(action, &QAction::triggered, w, [w]() {
             w->show();
             w->raise();
@@ -1473,6 +1758,12 @@ bool MainWindow::saveBuffer(int index) {
         QMessageBox::warning(this, "Trowel", "Could not save file.");
         return false;
     }
+    // If the saved file is settings.json, reload settings immediately so
+    // changes apply without waiting on the file watcher's debounce.
+    if (v->filePath() == Settings::instance().path()) {
+        Settings::instance().reloadNow();
+    }
+    saveDocState(v);
     return true;
 }
 
@@ -2476,7 +2767,7 @@ int MainWindow::applyWorkspaceEdit(const LspWorkspaceEdit& edit, QString* error)
             // No tab: open one and leave it dirty. Writing to disk behind the
             // user's back is not undoable by Ctrl+Z, and Trowel has no VCS
             // integration to fall back on.
-            if (!openPath(target.path)) {
+            if (!openPath(target.path, /*restoreDocState=*/false)) {
                 if (error) {
                     *error = QString("Could not open %1; some files may already "
                                      "have been changed.").arg(target.path);
@@ -2531,7 +2822,7 @@ bool MainWindow::goToNavEntry(const NavEntry& entry) {
     const QString abs = QFileInfo(entry.path).absoluteFilePath();
     if (const int existing = indexOfPath(abs); existing >= 0) {
         activateBuffer(existing);
-    } else if (!openPath(abs)) {
+    } else if (!openPath(abs, /*restoreDocState=*/false)) {
         return false;
     }
     EditorView* v = editorView();
@@ -2571,7 +2862,7 @@ void MainWindow::jumpToDefinition(const LspLocation& location) {
         // Cases 1 and 2 in one: the same document is just the tab that is
         // already active, so activating it is a no-op and no tab churns.
         activateBuffer(existing);
-    } else if (!openPath(abs)) {
+    } else if (!openPath(abs, /*restoreDocState=*/false)) {
         statusBar()->showMessage(QString("Could not open %1").arg(abs), 5000);
         emit definitionJumpFinished(false);
         return;
@@ -2609,7 +2900,7 @@ void MainWindow::jumpToSpan(const LspSpan& span) {
     const QString abs = QFileInfo(target).absoluteFilePath();
     if (const int existing = indexOfPath(abs); existing >= 0) {
         activateBuffer(existing);
-    } else if (!openPath(abs)) {
+    } else if (!openPath(abs, /*restoreDocState=*/false)) {
         return;
     }
     EditorView* v = editorView();
@@ -2683,8 +2974,8 @@ void MainWindow::updateDiagnosticStatus() {
         // real file and line; what the prefix adds is that the fault is not
         // here, and that there is somewhere to go.
         if (d->isFromDependency()) {
-            message = QString("Error in a dependency — %1  (%2 to open it)")
-                          .arg(message, kGoToDiagnosticSourceShortcut);
+            message = QString("Error in a dependency — %1  (Go to Diagnostic Source to open it)")
+                          .arg(message);
         }
     }
     if (message.isEmpty()) {
@@ -2749,51 +3040,9 @@ void MainWindow::openSettingsDirectory(const QString& relPath) {
     openDirectory(abs);
 }
 
-void MainWindow::openPreferences() {
-    for (int i = 0; i < static_cast<int>(buffers_.size()); ++i) {
-        TabContent* v = buffers_[i]->view;
-        if (v && v->kind() == TabContent::Kind::Preferences) {
-            activateBuffer(i);
-            return;
-        }
-    }
-
-    auto* prefs = new PreferencesView(editorStack_);
-    connect(prefs, &PreferencesView::rainbowBracketsChanged,
-            this, &MainWindow::applyRainbowBrackets);
-    connect(prefs, &PreferencesView::bracketPairGuidesChanged,
-            this, &MainWindow::applyBracketPairGuides);
-
-    // Reuse a fresh, empty, unmodified Untitled editor if available.
-    if (activeIndex_ >= 0 && activeIndex_ < static_cast<int>(buffers_.size())) {
-        Buffer* cur = buffers_[activeIndex_].get();
-        if (cur->view && cur->view->kind() == TabContent::Kind::Editor) {
-            auto* ev = static_cast<EditorView*>(cur->view);
-            if (ev->filePath().isEmpty() && ev->isEmpty() && !ev->isModified()) {
-                editorStack_->addWidget(prefs);
-                editorStack_->removeWidget(ev);
-                ev->deleteLater();
-                cur->view = prefs;
-                cur->untitledIndex = 0;
-                connectBufferSignals(activeIndex_);
-                editorStack_->setCurrentWidget(prefs);
-                updateBufferDisplayName(activeIndex_);
-                updateWindowTitle();
-                updateEditorActionsEnabled();
-                return;
-            }
-        }
-    }
-
-    auto buf = std::make_unique<Buffer>();
-    buf->view = prefs;
-    editorStack_->addWidget(prefs);
-    buf->displayName = computeDisplayName(*buf);
-    buffers_.push_back(std::move(buf));
-    const int newIndex = static_cast<int>(buffers_.size()) - 1;
-    connectBufferSignals(newIndex);
-    activateBuffer(newIndex);
-    refreshTabBar();
+void MainWindow::openSettings() {
+    Settings::instance().ensureFileExists();
+    openPath(Settings::instance().path());
 }
 
 void MainWindow::applyRainbowBrackets(bool enabled) {
@@ -2812,6 +3061,45 @@ void MainWindow::applyBracketPairGuides(bool enabled) {
     for (auto& b : buffers_) {
         if (b->view && b->view->kind() == TabContent::Kind::Editor) {
             static_cast<EditorView*>(b->view)->setBracketPairGuides(enabled);
+        }
+    }
+}
+
+void MainWindow::onSettingsChanged(const QStringList& keys) {
+    for (const QString& key : keys) {
+        if (key == "editor.rainbowBrackets") {
+            applyRainbowBrackets(Settings::instance().rainbowBrackets());
+        } else if (key == "editor.bracketPairGuides") {
+            applyBracketPairGuides(Settings::instance().bracketPairGuides());
+        } else if (key == "editor.font.family" || key == "editor.font.size") {
+            editorFont_ = Settings::instance().editorFont();
+            for (auto& b : buffers_) {
+                if (b->view && b->view->kind() == TabContent::Kind::Editor) {
+                    static_cast<EditorView*>(b->view)->setFont(editorFont_);
+                }
+            }
+        } else if (key == "lsp.enabled" || key == "lsp.serverPath") {
+            // Restart or stop the language server, the same way the
+            // Preferences checkbox did.
+            if (Settings::instance().lspEnabled()) {
+                LspManager::instance()->restart();
+            } else {
+                LspManager::instance()->shutdown();
+            }
+        } else if (key == "turmeric.path") {
+            statusBar()->showMessage(
+                "Turmeric path changed — restart the REPL to use it.", 4000);
+        } else if (key == "editor.wrap.prose" || key == "editor.wrap.code") {
+            // Re-apply wrap to every editor that uses the default.
+            for (auto& b : buffers_) {
+                if (b->view && b->view->kind() == TabContent::Kind::Editor) {
+                    auto* ev = static_cast<EditorView*>(b->view);
+                    if (ev->wrapOverride() == EditorView::WrapOverride::Default)
+                        ev->applyWrap();
+                }
+            }
+            if (wordWrapAction_ && editorView())
+                wordWrapAction_->setChecked(editorView()->isWordWrap());
         }
     }
 }
@@ -2886,6 +3174,13 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         event->ignore();
         return;
     }
+    // Save per-document state for every editor buffer before closing.
+    for (const auto& buf : buffers_) {
+        if (buf->view && buf->view->kind() == TabContent::Kind::Editor) {
+            saveDocState(static_cast<EditorView*>(buf->view));
+        }
+    }
+    DocumentStateStore::instance().flush();
     if (repl_) repl_->stop();
     if (debug_) debug_->stop();
     persistGlobals();
@@ -2982,7 +3277,7 @@ void MainWindow::startSession() {
                 // Jump to it, and put the jump on the nav stack so Back
                 // returns — the same treatment a definition jump gets.
                 const NavEntry origin = currentNavEntry();
-                if (!openPath(path)) return;
+                if (!openPath(path, /*restoreDocState=*/false)) return;
                 if (EditorView* ed = editorView()) {
                     ed->setCursorPos(ed->posFromLineCol(line - 1, 0));
                     ed->sciWidget()->scrollCaret();
@@ -3024,7 +3319,7 @@ void MainWindow::applySessionState(const QVariantMap& state) {
         if (isDir) {
             openDirectory(path);
         } else {
-            addBuffer(path, /*untitledIfEmpty=*/false);
+            addBuffer(path, /*untitledIfEmpty=*/false, /*restoreDocState=*/true);
         }
     }
 
@@ -3114,9 +3409,6 @@ QVariantMap MainWindow::sessionState() const {
 
 void MainWindow::persistGlobals() {
     QSettings settings;
-    if (EditorView* v = editorView()) {
-        settings.setValue("editorFont", v->currentFont());
-    }
     // Merge rather than overwrite. Each window carries its own recent-files
     // list, so a plain write would let whichever window closed last throw away
     // everything the others had opened. This window's entries stay in front.
@@ -3126,6 +3418,307 @@ void MainWindow::persistGlobals() {
     }
     while (merged.size() > 8) merged.removeLast();
     settings.setValue("recentFiles", merged);
+}
+
+// --- Phase 6: per-document state -----------------------------------------
+
+void MainWindow::saveDocState(EditorView* e) {
+    if (!e || !Settings::instance().rememberDocumentState()) return;
+    const QString path = e->filePath();
+    if (path.isEmpty() || isStdlibPath(path)) return;
+
+    ScintillaEdit* sci = e->sciWidget();
+    if (!sci) return;
+
+    DocState s;
+    // Caret and anchor as line/column.
+    const auto [cLine, cCol] = e->lineColFromPos(e->cursorPos());
+    const auto [aLine, aCol] = e->lineColFromPos(e->anchorPos());
+    s.caretLine = cLine;
+    s.caretColumn = cCol;
+    s.anchorLine = aLine;
+    s.anchorColumn = aCol;
+
+    // Scroll: the document line at the top of the view.
+    const int firstVisible = static_cast<int>(sci->firstVisibleLine());
+    s.topLine = static_cast<int>(sci->docLineFromVisible(firstVisible));
+    s.xOffset = static_cast<int>(sci->xOffset());
+
+    // Folded headers: lines that are headers and not expanded.
+    const int lineCount = static_cast<int>(sci->lineCount());
+    for (int line = 0; line < lineCount; ++line) {
+        const int level = static_cast<int>(sci->foldLevel(line));
+        if ((level & SC_FOLDLEVELHEADERFLAG) && !sci->foldExpanded(line)) {
+            s.foldedHeaders.append(line);
+        }
+    }
+
+    // Wrap override.
+    switch (e->wrapOverride()) {
+    case EditorView::WrapOverride::On:  s.wrapOverride = 1; break;
+    case EditorView::WrapOverride::Off: s.wrapOverride = 2; break;
+    default:                             s.wrapOverride = 0; break;
+    }
+
+    // Validation: file size and mtime.
+    QFileInfo fi(path);
+    s.fileSize = fi.size();
+    s.fileMtime = static_cast<qint64>(fi.lastModified().toSecsSinceEpoch());
+
+    DocumentStateStore::instance().remember(path, s);
+}
+
+void MainWindow::restoreDocState(EditorView* e) {
+    if (!e || !Settings::instance().rememberDocumentState()) return;
+    const QString path = e->filePath();
+    if (path.isEmpty() || isStdlibPath(path)) return;
+
+    auto opt = DocumentStateStore::instance().lookup(path);
+    if (!opt) return;
+    const DocState& s = *opt;
+
+    ScintillaEdit* sci = e->sciWidget();
+    if (!sci) return;
+
+    // 1. Wrap override first — it changes layout and therefore what
+    //    "scroll to line N" means.
+    switch (s.wrapOverride) {
+    case 1: e->setWrapOverride(EditorView::WrapOverride::On);  break;
+    case 2: e->setWrapOverride(EditorView::WrapOverride::Off); break;
+    default: break;
+    }
+
+    // 2. Clamp caret and anchor to the document, then set them.
+    const int lineCount = static_cast<int>(sci->lineCount());
+    const int cLine = qBound(0, s.caretLine, lineCount - 1);
+    const int aLine = qBound(0, s.anchorLine, lineCount - 1);
+    const int caretPos = e->posFromLineCol(cLine, s.caretColumn);
+    const int anchorPos = e->posFromLineCol(aLine, s.anchorColumn);
+    e->setSelection(anchorPos, caretPos);
+
+    // 3. Scroll.
+    const int topLine = qBound(0, s.topLine, lineCount - 1);
+    sci->setFirstVisibleLine(static_cast<int>(sci->visibleFromDocLine(topLine)));
+    sci->setXOffset(s.xOffset);
+
+    // 4. Restore folds only if size and mtime match.
+    QFileInfo fi(path);
+    const bool fileUnchanged =
+        fi.size() == s.fileSize &&
+        static_cast<qint64>(fi.lastModified().toSecsSinceEpoch()) == s.fileMtime;
+    if (fileUnchanged && !s.foldedHeaders.isEmpty()) {
+        // Lex up to the max fold line so fold levels exist.
+        int maxFoldLine = 0;
+        for (int h : s.foldedHeaders) maxFoldLine = qMax(maxFoldLine, h);
+        sci->colourise(0, static_cast<int>(sci->positionFromLine(maxFoldLine + 1)));
+        for (int h : s.foldedHeaders) {
+            if (h >= lineCount) continue;
+            const int level = static_cast<int>(sci->foldLevel(h));
+            if ((level & SC_FOLDLEVELHEADERFLAG) && sci->foldExpanded(h)) {
+                sci->foldLine(h, SC_FOLDACTION_CONTRACT);
+            }
+        }
+    }
+
+    // 5. Make sure the caret is not inside a folded region.
+    e->revealLine(cLine);
+}
+
+// --- Phase 1: new menu command implementations ---------------------------
+
+void MainWindow::goToLine() {
+    EditorView* v = editorView();
+    if (!v) return;
+    bool ok = false;
+    const QString text = QInputDialog::getText(
+        this, "Go to Line", "Line:Column (e.g. 12:3):",
+        QLineEdit::Normal, {}, &ok);
+    if (!ok || text.isEmpty()) return;
+    int line = 0, col = 1;
+    const int colon = text.indexOf(':');
+    if (colon >= 0) {
+        line = text.left(col).toInt();
+        col = text.mid(colon + 1).toInt();
+        if (col < 1) col = 1;
+    } else {
+        line = text.toInt();
+    }
+    if (line < 1) return;
+    const int pos = v->posFromLineCol(line, col);
+    if (pos < 0) return;
+    v->setCursorPos(pos);
+    v->setSelection(pos, pos);
+    auto* sci = v->sciWidget();
+    if (sci) {
+        sci->scrollCaret();
+        sci->setFocus(Qt::OtherFocusReason);
+    }
+}
+
+void MainWindow::toggleComment() {
+    EditorView* v = editorView();
+    if (!v) return;
+    auto* sci = v->sciWidget();
+    if (!sci) return;
+    const QByteArray token = LineCommentToken(v->language());
+    if (token.isEmpty()) return;
+    const auto [start, end] = v->selectionRange();
+    const int startLine = sci->lineFromPosition(start);
+    const int endLine = sci->lineFromPosition(end);
+    // If the selection ends at the start of a line, don't comment that line.
+    const int effectiveEnd = (end > start && sci->positionFromLine(endLine) == end)
+        ? endLine - 1 : endLine;
+    // Check if all lines are already commented.
+    bool allCommented = true;
+    for (int line = startLine; line <= effectiveEnd; ++line) {
+        const int lineStart = sci->positionFromLine(line);
+        const QByteArray lineText = sci->textRange(lineStart, sci->lineEndPosition(line));
+        if (!lineText.trimmed().startsWith(token)) {
+            allCommented = false;
+            break;
+        }
+    }
+    sci->beginUndoAction();
+    for (int line = startLine; line <= effectiveEnd; ++line) {
+        const int lineStart = sci->positionFromLine(line);
+        if (allCommented) {
+            // Uncomment: remove the token and one following space if present.
+            const QByteArray lineText = sci->textRange(lineStart, sci->lineEndPosition(line));
+            const QByteArray trimmed = lineText.trimmed();
+            if (trimmed.startsWith(token)) {
+                int removeLen = token.size();
+                // Find the actual position of the token in the line.
+                int pos = lineStart;
+                while (pos < sci->lineEndPosition(line) && sci->textRange(pos, pos + 1) == " ")
+                    pos++;
+                sci->deleteRange(pos, removeLen);
+                // Remove one space after the token if present.
+                if (sci->textRange(pos, pos + 1) == " ")
+                    sci->deleteRange(pos, 1);
+            }
+        } else {
+            // Comment: insert the token at the start of the line.
+            sci->insertText(lineStart, token + " ");
+        }
+    }
+    sci->endUndoAction();
+}
+
+void MainWindow::indentSelection() {
+    EditorView* v = editorView();
+    if (!v) return;
+    auto* sci = v->sciWidget();
+    if (!sci) return;
+    sci->send(SCI_TAB);
+}
+
+void MainWindow::outdentSelection() {
+    EditorView* v = editorView();
+    if (!v) return;
+    auto* sci = v->sciWidget();
+    if (!sci) return;
+    sci->send(SCI_BACKTAB);
+}
+
+void MainWindow::zoomIn() {
+    editorFont_.setPointSize(editorFont_.pointSize() + 1);
+    for (auto& b : buffers_) {
+        if (b->view && b->view->kind() == TabContent::Kind::Editor) {
+            static_cast<EditorView*>(b->view)->setFont(editorFont_);
+        }
+    }
+}
+
+void MainWindow::zoomOut() {
+    if (editorFont_.pointSize() <= 6) return;
+    editorFont_.setPointSize(editorFont_.pointSize() - 1);
+    for (auto& b : buffers_) {
+        if (b->view && b->view->kind() == TabContent::Kind::Editor) {
+            static_cast<EditorView*>(b->view)->setFont(editorFont_);
+        }
+    }
+}
+
+void MainWindow::actualSize() {
+    editorFont_ = Settings::instance().editorFont();
+    for (auto& b : buffers_) {
+        if (b->view && b->view->kind() == TabContent::Kind::Editor) {
+            static_cast<EditorView*>(b->view)->setFont(editorFont_);
+        }
+    }
+}
+
+void MainWindow::showAbout() {
+    QFile versionFile(":/VERSION");
+    QString version = "unknown";
+    if (versionFile.open(QIODevice::ReadOnly)) {
+        version = QString::fromUtf8(versionFile.readAll()).trimmed();
+        versionFile.close();
+    }
+    QString turmericVersion = TROWEL_TURMERIC_VERSION;
+    QMessageBox::about(this, "About Trowel",
+        QString("<h3>Trowel</h3>"
+                "<p>Version %1</p>"
+                "<p>Turmeric %2</p>"
+                "<p>A code editor for the Turmeric language.</p>")
+            .arg(version, turmericVersion));
+}
+
+void MainWindow::openKeyboardShortcuts() {
+    QDesktopServices::openUrl(QUrl(
+        "https://github.com/turmeric-lang/trowel/blob/v" +
+        QString::fromUtf8(TROWEL_TURMERIC_VERSION) +
+        "/docs/guides/keyboard-shortcuts.md"));
+}
+
+void MainWindow::openTurmericDocumentation() {
+    QDesktopServices::openUrl(QUrl(
+        "https://turmeric-lang.org/docs/" +
+        QString::fromUtf8(TROWEL_TURMERIC_VERSION)));
+}
+
+void MainWindow::openTrowelHelp() {
+    QDesktopServices::openUrl(QUrl("https://github.com/turmeric-lang/trowel"));
+}
+
+void MainWindow::reportIssue() {
+    QDesktopServices::openUrl(QUrl(
+        "https://github.com/turmeric-lang/trowel/issues/new"));
+}
+
+void MainWindow::updateEditActionsEnabled() {
+    // Determine which widget has focus.  The terminal is a QPlainTextEdit;
+    // the editor is a ScintillaEdit inside an EditorView.  Rather than
+    // checking QApplication::focusWidget() (which may return the EditorView
+    // container rather than the ScintillaEdit child), check whether the
+    // terminal has focus directly.
+    const bool terminalFocused = terminal_ && terminal_->hasFocus();
+    const bool editorFocused = !terminalFocused && editorView() != nullptr;
+    const bool canEdit = terminalFocused || editorFocused;
+
+    // Undo/Redo: enabled when the editor can undo/redo, regardless of
+    // focus.  A disabled action would block the keyboard shortcut from
+    // reaching Scintilla, but the terminal's own keymap handles Ctrl+Z
+    // via ShortcutOverride (phase 1 F12), so there is no double-handling.
+    if (undoAction_) {
+        EditorView* v = editorView();
+        undoAction_->setEnabled(v && v->sciWidget() && v->sciWidget()->canUndo());
+    }
+    if (redoAction_) {
+        EditorView* v = editorView();
+        redoAction_->setEnabled(v && v->sciWidget() && v->sciWidget()->canRedo());
+    }
+    if (cutAction_) cutAction_->setEnabled(canEdit);
+    if (copyAction_) copyAction_->setEnabled(canEdit);
+    if (pasteAction_) pasteAction_->setEnabled(canEdit);
+    if (selectAllAction_) selectAllAction_->setEnabled(canEdit);
+    if (toggleCommentAction_) {
+        EditorView* v = editorView();
+        toggleCommentAction_->setEnabled(
+            v && !LineCommentToken(v->language()).isEmpty());
+    }
+    if (indentAction_) indentAction_->setEnabled(editorFocused);
+    if (outdentAction_) outdentAction_->setEnabled(editorFocused);
 }
 
 }

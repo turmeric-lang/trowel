@@ -542,10 +542,18 @@ def test_markdown_delegates_new_language_fences(trowel, tmp_path):
 
 
 def test_unknown_extension_falls_back_to_turmeric(trowel, tmp_path):
-    f = tmp_path / "notes.txt"
+    f = tmp_path / "notes.xyz"
     f.write_text("(def hi 42)\n")
     trowel.call("editor.open", {"path": str(f)})
     assert style_at(trowel, 1) == TUR_DEFINE
+
+
+def test_plain_text_has_no_highlighting(trowel, tmp_path):
+    f = tmp_path / "notes.txt"
+    f.write_text("(def hi 42)\n")
+    trowel.call("editor.open", {"path": str(f)})
+    # PlainText: everything is style 0 (default), no Turmeric highlighting.
+    assert style_at(trowel, 1) == 0
 
 
 def test_language_switches_when_saved_under_a_new_extension(trowel, tmp_path):

@@ -226,7 +226,7 @@ def test_completion_list_with_a_question_mark_name_does_not_abort(
     # manager and returns labels, never building Scintilla's list box. Only a
     # path that reaches `showCompletions` -> `autoCShow` can. Complete Symbol
     # is that path, and invoking it is the whole test.
-    trowel.call("menu.invoke", {"path": ["Run", "Complete Symbol"]})
+    trowel.call("menu.invoke", {"path": ["Edit", "Complete Symbol"]})
 
     # Still answering. A crash takes the control socket with it, so this call
     # raises BrokenPipeError rather than failing an assert — which is exactly
@@ -483,7 +483,7 @@ def test_go_to_diagnostic_source_opens_the_dependency(trowel, tmp_path: Path):
     d = trowel.call("lsp.diagnostics")["diagnostics"][0]
     trowel.call("editor.set_cursor",
                 {"line": d["start_line"], "col": d["start_char"]})
-    trowel.call("menu.invoke", {"path": ["Run", "Go to Diagnostic Source"]})
+    trowel.call("menu.invoke", {"path": ["Go", "Go to Diagnostic Source"]})
 
     opened = trowel.call("editor.get_text")["text"]
     assert "this-name-does-not-exist" in opened, \
@@ -503,7 +503,7 @@ def test_go_to_diagnostic_source_declines_a_local_diagnostic(
     assert d["from_dependency"] is False, d
     trowel.call("editor.set_cursor",
                 {"line": d["start_line"], "col": d["start_char"]})
-    trowel.call("menu.invoke", {"path": ["Run", "Go to Diagnostic Source"]})
+    trowel.call("menu.invoke", {"path": ["Go", "Go to Diagnostic Source"]})
 
     # Same buffer, no jump.
     assert trowel.call("editor.get_text")["text"] == before
@@ -539,5 +539,5 @@ def test_a_dependency_error_through_a_load_chain_points_at_the_innermost_file(
 
     trowel.call("editor.set_cursor",
                 {"line": d["start_line"], "col": d["start_char"]})
-    trowel.call("menu.invoke", {"path": ["Run", "Go to Diagnostic Source"]})
+    trowel.call("menu.invoke", {"path": ["Go", "Go to Diagnostic Source"]})
     assert "this-name-does-not-exist" in trowel.call("editor.get_text")["text"]

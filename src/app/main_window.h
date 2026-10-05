@@ -40,13 +40,15 @@ class TabContent;
 class TerminalView;
 class WindowManager;
 
+struct DocState;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
 
-    bool openPath(const QString& path);
+    bool openPath(const QString& path, bool restore = true);
     bool openDirectory(const QString& path);
 
     // Two-phase startup. The constructor builds UI only and leaves the window
@@ -209,17 +211,35 @@ private slots:
     // Reflect the active buffer's diagnostics in the status bar: the message
     // under the caret if there is one, otherwise a count.
     void updateDiagnosticStatus();
-    void pickFont();
     void openRecentFromAction();
     void toggleSplitOrientation();
     void toggleReplVisible(bool visible);
     void nextTab();
     void prevTab();
     void closeCurrentTab();
-    void openPreferences();
+    void openSettings();
     void applyRainbowBrackets(bool enabled);
     void applyBracketPairGuides(bool enabled);
+    void onSettingsChanged(const QStringList& keys);
     void rebuildWindowMenu();
+    void goToLine();
+    void toggleComment();
+    void indentSelection();
+    void outdentSelection();
+    void zoomIn();
+    void zoomOut();
+    void actualSize();
+    void showAbout();
+    void openKeyboardShortcuts();
+    void openTurmericDocumentation();
+    void openTrowelHelp();
+    void reportIssue();
+
+public:
+    // Refresh the Edit menu's enabled states. Public so the control
+    // handler can call it before menu.invoke, since menu.invoke does
+    // not fire aboutToShow the way a real click does.
+    void updateEditActionsEnabled();
 
 public:
     // One visited caret position, for Back/Forward.
@@ -324,13 +344,20 @@ private:
     void startDebugSession(bool replay);
     QString computeDisplayName(const Buffer& buf) const;
     void updateBufferDisplayName(int index);
-    Buffer* addBuffer(const QString& path, bool untitledIfEmpty);
+    Buffer* addBuffer(const QString& path, bool untitledIfEmpty, bool restore = false);
     void activateBuffer(int index);
     void closeBuffer(int index);
     void ensureAtLeastOneBuffer();
     bool saveBuffer(int index);
     bool saveBufferAs(int index);
     void connectBufferSignals(int index);
+
+    // Phase 6: per-document state.  saveDocState captures the current editor's
+    // caret, scroll, folds, and wrap override into DocumentStateStore.
+    // restoreDocState applies them after a file is loaded.  Both are no-ops
+    // when editor.rememberDocumentState is false or the path is empty/stdlib.
+    void saveDocState(EditorView* e);
+    void restoreDocState(EditorView* e);
 
     WindowManager* windows_ = nullptr;
     int activeIndex_ = -1;
@@ -388,7 +415,35 @@ private:
     QAction* toggleReplAction_ = nullptr;
     QAction* saveAction_ = nullptr;
     QAction* saveAsAction_ = nullptr;
-    QAction* pickFontAction_ = nullptr;
+    // Edit menu actions (Phase 1).
+    QAction* undoAction_ = nullptr;
+    QAction* redoAction_ = nullptr;
+    QAction* cutAction_ = nullptr;
+    QAction* copyAction_ = nullptr;
+    QAction* pasteAction_ = nullptr;
+    QAction* selectAllAction_ = nullptr;
+    QAction* toggleCommentAction_ = nullptr;
+    QAction* indentAction_ = nullptr;
+    QAction* outdentAction_ = nullptr;
+    QAction* settingsAction_ = nullptr;
+    QAction* turmericSettingsAction_ = nullptr;
+    // View menu actions (Phase 1).
+    QAction* zoomInAction_ = nullptr;
+    QAction* zoomOutAction_ = nullptr;
+    QAction* actualSizeAction_ = nullptr;
+    QAction* wordWrapAction_ = nullptr;
+    QAction* fullScreenAction_ = nullptr;
+    // Go menu actions (Phase 1).
+    QAction* goToLineAction_ = nullptr;
+    // Window menu actions (Phase 1).
+    QAction* minimizeAction_ = nullptr;
+    QAction* zoomAction_ = nullptr;
+    QAction* bringAllToFrontAction_ = nullptr;
+    QAction* focusEditorAction_ = nullptr;
+    QAction* focusReplAction_ = nullptr;
+    QAction* toggleFocusAction_ = nullptr;
+    // Help menu actions (Phase 1).
+    QAction* aboutAction_ = nullptr;
     QStringList recentFiles_;
     QVector<NavEntry> navBack_;
     QVector<NavEntry> navForward_;

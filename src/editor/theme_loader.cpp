@@ -371,6 +371,19 @@ void ApplyThemeToEditor(ScintillaEdit* sci, const Theme& theme) {
                               qMin(theme.occurrenceHighlight.alpha() * 2, 255));
     sci->indicSetUnder(occurrence::kIndicator, true);
 
+    // Find/replace match highlighting.
+    sci->indicSetStyle(find::kMatchIndicator, INDIC_ROUNDBOX);
+    sci->indicSetFore(find::kMatchIndicator, 0x888800);  // yellow-ish
+    sci->indicSetAlpha(find::kMatchIndicator, 60);
+    sci->indicSetOutlineAlpha(find::kMatchIndicator, 120);
+    sci->indicSetUnder(find::kMatchIndicator, true);
+
+    sci->indicSetStyle(find::kCurrentIndicator, INDIC_ROUNDBOX);
+    sci->indicSetFore(find::kCurrentIndicator, 0xCCCC00);  // brighter yellow
+    sci->indicSetAlpha(find::kCurrentIndicator, 120);
+    sci->indicSetOutlineAlpha(find::kCurrentIndicator, 200);
+    sci->indicSetUnder(find::kCurrentIndicator, true);
+
     // Matched brace.
     sci->styleSetFore(STYLE_BRACELIGHT, bgra(theme.matchedBraceFg));
     sci->styleSetBack(STYLE_BRACELIGHT, bgra(theme.matchedBraceBg));

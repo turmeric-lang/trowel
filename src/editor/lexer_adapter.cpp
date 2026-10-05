@@ -191,6 +191,7 @@ void ScanLine(Language lang, const ScanInput& in, LexState& st, Emitter& out) {
     case Language::TurmericSweet: ScanTurmericSweetLine(in, st, out); break;
     case Language::R7rs:      ScanR7rsLine(in, st, out); break;
     case Language::R7rsSweet: ScanR7rsSweetLine(in, st, out); break;
+    case Language::PlainText: break;  // no-op: style 0 for the whole line
     case Language::LanguageCount:  // not a language; fall through to the default
     case Language::Turmeric: ScanTurmericLine(in, st, out); break;
     }
@@ -209,6 +210,7 @@ int DefaultStyleFor(Language lang) {
     case Language::TurmericSweet:
     case Language::R7rs:
     case Language::R7rsSweet:
+    case Language::PlainText:
     case Language::LanguageCount:
     case Language::Turmeric: break;
     }
@@ -285,6 +287,19 @@ bool LanguageForFileName(const QString& path, Language& out) {
         || lower.endsWith(".cpp") || lower.endsWith(".cxx")
         || lower.endsWith(".hpp") || lower.endsWith(".hh")) {
         out = Language::C;
+        return true;
+    }
+
+    // Plain text: suffixes plus common extensionless names.  Rule order
+    // matters: CMakeLists.txt is matched by the CMake rule above, so it
+    // never reaches here.
+    if (lower.endsWith(".txt") || lower.endsWith(".text")
+        || lower.endsWith(".rst") || lower.endsWith(".adoc")
+        || lower.endsWith(".org")
+        || lower == "license" || lower == "copying"
+        || lower == "authors" || lower == "notice"
+        || lower == "commit_editmsg") {
+        out = Language::PlainText;
         return true;
     }
     return false;
@@ -459,6 +474,7 @@ public:
         case Language::TurmericSweet: return "turmeric-sweet";
         case Language::R7rs:      return "r7rs";
         case Language::R7rsSweet: return "r7rs-sweet";
+        case Language::PlainText: return "plaintext";
         case Language::LanguageCount:
         case Language::Turmeric: break;
         }
@@ -471,6 +487,160 @@ private:
     Language lang_;
     bool rainbow_;
 };
+
+// --- Fold level computation ---
+//
+// Called from Lex() after each line is scanned.  The strategy depends on the
+// language:
+//   Bracket depth: Turmeric, R7RS, JSON — a line whose end depth exceeds the
+//     lowest depth reached on that line is a header.
+//   Headings: Markdown — `#` headings and code-fence boundaries.
+//   Indentation: Python, Just — a more-indented line opens a fold.
+//
+// Languages without a strategy get SC_FOLDLEVELBASE with no flags, which means
+// no fold margin and no folding.
+namespace {
+
+bool IsBracketDepthLang(Language lang) {
+    return lang == Language::Turmeric || lang == Language::TurmericSweet
+        || lang == Language::R7rs || lang == Language::R7rsSweet
+        || lang == Language::Json;
+}
+
+bool IsIndentLang(Language lang) {
+    return lang == Language::Python || lang == Language::Just;
+}
+
+bool IsHeadingLang(Language lang) {
+    return lang == Language::Markdown;
+}
+
+int LeadingSpaces(const char* text, Sci_Position len) {
+    int n = 0;
+    for (Sci_Position i = 0; i < len; ++i) {
+        if (text[i] == ' ') ++n;
+        else if (text[i] == '\t') n += 4;  // approximate
+        else break;
+    }
+    return n;
+}
+
+bool IsBlankLine(const char* text, Sci_Position len) {
+    for (Sci_Position i = 0; i < len; ++i)
+        if (text[i] != ' ' && text[i] != '\t' && text[i] != '\r')
+            return false;
+    return true;
+}
+
+int MarkdownHeadingLevel(const char* text, Sci_Position len) {
+    if (len < 1 || text[0] != '#') return 0;
+    int level = 0;
+    while (level < 6 && level < len && text[level] == '#') ++level;
+    if (level >= len || text[level] == ' ' || text[level] == '\t') return level;
+    return 0;  // `#foo` is not a heading
+}
+
+bool IsCodeFence(const char* text, Sci_Position len) {
+    if (len < 3) return false;
+    if (text[0] == '`' && text[1] == '`' && text[2] == '`') return true;
+    if (text[0] == '~' && text[1] == '~' && text[2] == '~') return true;
+    return false;
+}
+
+void ComputeFoldLevel(IDocument* doc, Sci_Position line, Language lang,
+                      const char* lineText, Sci_Position lineLen,
+                      int startBracketDepth, int startJsonDepth,
+                      const LexState& st) {
+    if (IsBracketDepthLang(lang)) {
+        const int startDepth = (lang == Language::Json) ? startJsonDepth
+                                                         : startBracketDepth;
+        const int endDepth = (lang == Language::Json) ? st.jsonDepth
+                                                      : st.turBracketDepth;
+        int level = SC_FOLDLEVELBASE + startDepth;
+        if (endDepth > st.minBracketDepth)
+            level |= SC_FOLDLEVELHEADERFLAG;
+        doc->SetLevel(line, level);
+        return;
+    }
+
+    if (IsHeadingLang(lang)) {
+        // Markdown: headings nest by level, code fences open/close.
+        // Recover the previous line's level to handle nesting.
+        const int prevLevel = (line > 0)
+            ? static_cast<int>(doc->GetLevel(line - 1))
+            : SC_FOLDLEVELBASE;
+        const int prevBase = prevLevel & SC_FOLDLEVELNUMBERMASK;
+
+        if (IsBlankLine(lineText, lineLen)) {
+            doc->SetLevel(line, prevBase | SC_FOLDLEVELWHITEFLAG);
+            return;
+        }
+
+        // Code fence toggles a fold.
+        if (IsCodeFence(lineText, lineLen)) {
+            if (st.mdInFence) {
+                // Closing fence — same level as the opening line.
+                doc->SetLevel(line, prevBase);
+            } else {
+                // Opening fence — header at the current level.
+                doc->SetLevel(line, prevBase | SC_FOLDLEVELHEADERFLAG);
+            }
+            return;
+        }
+
+        if (st.mdInFence) {
+            // Inside a code fence — no fold headers.
+            doc->SetLevel(line, prevBase);
+            return;
+        }
+
+        const int hLevel = MarkdownHeadingLevel(lineText, lineLen);
+        if (hLevel > 0) {
+            // A heading at level N is a header at fold level N-1.
+            const int foldLevel = SC_FOLDLEVELBASE + hLevel - 1;
+            doc->SetLevel(line, foldLevel | SC_FOLDLEVELHEADERFLAG);
+        } else {
+            // Normal text — inherit the level from the previous heading.
+            // Find the most recent heading level.
+            doc->SetLevel(line, prevBase);
+        }
+        return;
+    }
+
+    if (IsIndentLang(lang)) {
+        if (IsBlankLine(lineText, lineLen)) {
+            const int prevLevel = (line > 0)
+                ? static_cast<int>(doc->GetLevel(line - 1))
+                : SC_FOLDLEVELBASE;
+            doc->SetLevel(line, (prevLevel & SC_FOLDLEVELNUMBERMASK) | SC_FOLDLEVELWHITEFLAG);
+            return;
+        }
+
+        const int indent = LeadingSpaces(lineText, lineLen);
+        const int prevLevel = (line > 0)
+            ? static_cast<int>(doc->GetLevel(line - 1))
+            : SC_FOLDLEVELBASE;
+        const int prevFlags = prevLevel & ~SC_FOLDLEVELNUMBERMASK;
+        const int prevIndent = (prevLevel & SC_FOLDLEVELNUMBERMASK) - SC_FOLDLEVELBASE;
+
+        if (prevFlags & SC_FOLDLEVELWHITEFLAG) {
+            // Previous line was blank — inherit from the last non-blank line.
+            doc->SetLevel(line, SC_FOLDLEVELBASE + indent);
+            return;
+        }
+
+        int level = SC_FOLDLEVELBASE + indent;
+        if (indent > prevIndent)
+            level |= SC_FOLDLEVELHEADERFLAG;
+        doc->SetLevel(line, level);
+        return;
+    }
+
+    // No fold strategy for this language.
+    doc->SetLevel(line, SC_FOLDLEVELBASE);
+}
+
+}  // namespace
 
 void ScannerLexer::Lex(Sci_PositionU startPos, Sci_Position lengthDoc,
                        int initStyle, IDocument* doc) {
@@ -522,11 +692,23 @@ void ScannerLexer::Lex(Sci_PositionU startPos, Sci_Position lengthDoc,
         if (lineEnd < readLen && text[lineEnd] == '\r') ++lineEnd;
         if (lineEnd < readLen && text[lineEnd] == '\n') ++lineEnd;
 
+        // Save the bracket depth at the start of this line for fold computation.
+        const int startBracketDepth = st.turBracketDepth;
+        const int startJsonDepth = st.jsonDepth;
+        st.minBracketDepth = st.turBracketDepth;  // also covers JSON (same field slot)
+
         ScanInput in{text, i, contentEnd, rainbow_, line};
         ScanLine(lang_, in, st, out);
         out.FillTo(lineEnd);
 
         doc->SetLineState(line, PackLexState(st));
+
+        // Compute fold levels.  Scintilla calls Fold() after Lex(), but the
+        // minBracketDepth is only available during the scan, so we compute
+        // levels here and leave Fold() empty.
+        ComputeFoldLevel(doc, line, lang_, text + i, contentEnd - i,
+                         startBracketDepth, startJsonDepth, st);
+
         ++line;
         i = lineEnd;
     }
@@ -536,6 +718,47 @@ void ScannerLexer::Lex(Sci_PositionU startPos, Sci_Position lengthDoc,
 
 ILexer5* CreateLexerForLanguage(Language lang, bool rainbow) {
     return new ScannerLexer(lang, rainbow);
+}
+
+QByteArray LineCommentToken(Language lang) {
+    switch (lang) {
+    case Language::Turmeric:
+    case Language::TurmericSweet:
+    case Language::R7rs:
+    case Language::R7rsSweet:
+        return ";";
+    case Language::C:
+        return "//";
+    case Language::Python:
+    case Language::Sh:
+    case Language::Toml:
+    case Language::CMake:
+    case Language::Just:
+        return "#";
+    case Language::Markdown:
+    case Language::Json:
+    case Language::PlainText:
+        return {};
+    case Language::LanguageCount:
+        return {};
+    }
+    return {};
+}
+
+bool HasFoldStrategy(Language lang) {
+    switch (lang) {
+    case Language::Turmeric:
+    case Language::TurmericSweet:
+    case Language::R7rs:
+    case Language::R7rsSweet:
+    case Language::Json:
+    case Language::Markdown:
+    case Language::Python:
+    case Language::Just:
+        return true;
+    default:
+        return false;
+    }
 }
 
 }

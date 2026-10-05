@@ -59,6 +59,25 @@ void turi_env_register_native(TuriEnv* env, const char* name,
 void turi_env_register_native_caps(TuriEnv* env, const char* name,
                                    TuriNativeFn fn, void* ud, TuriCaps required);
 
+// TurNativeRetType — the runtime return type a native's TuriValue carries.
+// Defined in the Turmeric runtime/globals.h (not shipped in the prebuilt
+// include/ directory), re-declared here verbatim.  Registering the return
+// type via turi_env_register_native_typed lets the elaborator type calls to
+// the native correctly instead of defaulting to :int and emitting TUR-W0040.
+typedef enum {
+    TUR_NRT_INT = 0,
+    TUR_NRT_FLOAT,
+    TUR_NRT_BOOL,
+    TUR_NRT_CSTR,
+    TUR_NRT_VOID,
+    TUR_NRT_PTR,
+    TUR_NRT_SYNTAX,
+} TurNativeRetType;
+
+void turi_env_register_native_typed(TuriEnv* env, const char* name,
+                                    TuriNativeFn fn, void* ud,
+                                    TurNativeRetType ret);
+
 // turi/env.h
 TuriEnv* turi_env_new(void);
 TuriEnv* turi_env_new_sandboxed(void);

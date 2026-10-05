@@ -6,14 +6,18 @@
 #include "snippet_session.h"
 #include "syntax_descriptor.h"
 
+#include "app/icon_font.h"
 #include "app/main_window.h"
 #include "editor/editor_view.h"
+#include "editor/theme_loader.h"
 
 #include <ScintillaEdit.h>
 
 #include <QAction>
 #include <QKeyEvent>
 #include <QStatusBar>
+
+#include <cstdlib>
 
 namespace trowel {
 
@@ -70,6 +74,9 @@ static TuriValue native_register_command(TuriEnv* /*env*/, TuriValue* args,
 }
 
 // (trowel:register-button :icon "..." :tooltip "..." :command "...")
+// The icon string is a hex Nerd Font codepoint, e.g. "0xF0411" for
+// nf-md-playlist_play.  The glyph is rasterized via the same NerdIcon
+// path the built-in side-bar buttons use.
 static TuriValue native_register_button(TuriEnv* /*env*/, TuriValue* args,
                                          uint32_t n, void* ud)
 {
@@ -77,17 +84,33 @@ static TuriValue native_register_button(TuriEnv* /*env*/, TuriValue* args,
     if (!c || !c->window) return turi_error("no main window");
     if (n < 3) return turi_error("register-button needs 3 args");
 
-    const QString icon = QString::fromUtf8(asCStr(args[0]) ? asCStr(args[0]) : "");
+    const QString iconStr = QString::fromUtf8(asCStr(args[0]) ? asCStr(args[0]) : "");
     const QString tooltip = QString::fromUtf8(asCStr(args[1]) ? asCStr(args[1]) : "");
     const QString commandId = QString::fromUtf8(asCStr(args[2]) ? asCStr(args[2]) : "");
 
-    // Create a QAction that runs the command by id.
     auto* action = new QAction(c->window);
     action->setToolTip(tooltip);
-    // Icon font support: if the icon string starts with "nf-", it's a
-    // Nerd Font / Material Design icon code.  For now, use the text as
-    // the icon name and let MainWindow's icon system handle it.
-    action->setText(icon);
+
+    // Parse the icon string as a hex Nerd Font codepoint.
+    bool ok = false;
+    const char* raw = asCStr(args[0]);
+    if (raw) {
+        const char* p = raw;
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p += 2;
+        char32_t codepoint = static_cast<char32_t>(std::strtoul(p, nullptr, 16));
+        ok = (codepoint != 0 || (p[0] == '0' && !p[1]));
+        if (ok) {
+            const QColor iconColor = LoadBuiltinDarkTheme().editorFg;
+            action->setIcon(NerdIcon(codepoint, 18, iconColor));
+        }
+    }
+
+    // Fall back to text if the codepoint did not parse.  The side bar uses
+    // ToolButtonIconOnly, so a text-only action shows a blank button — but
+    // at least the tooltip works.
+    if (!ok)
+        action->setText(iconStr);
+
     QObject::connect(action, &QAction::triggered, c->window, [c, commandId] {
         if (c->registry) c->registry->run(commandId);
     });
@@ -377,35 +400,36 @@ void registerPluginNatives(TuriEnv* env, PluginContext* ctxPtr)
     struct NativeDef {
         const char* name;
         TuriNativeFn fn;
+        TurNativeRetType ret;
     };
 
     static const NativeDef natives[] = {
-        {"trowel-register-command",  native_register_command},
-        {"trowel-register-button",   native_register_button},
-        {"trowel-register-hook",     native_register_hook},
-        {"trowel-buffer-text",       native_buffer_text},
-        {"trowel-cursor-pos",        native_cursor_pos},
-        {"trowel-selection",         native_selection},
-        {"trowel-file-path",         native_file_path},
-        {"trowel-word-at-cursor",    native_word_at_cursor},
-        {"trowel-set-text",          native_set_text},
-        {"trowel-insert-text",       native_insert_text},
-        {"trowel-set-cursor",        native_set_cursor},
-        {"trowel-set-selection",     native_set_selection},
-        {"trowel-status-message",    native_status_message},
-        {"trowel-focus-editor",      native_focus_editor},
-        {"trowel-focus-repl",        native_focus_repl},
-        {"trowel-reload-plugin",     native_reload_plugin},
-        {"trowel-insert-snippet",    native_insert_snippet},
-        {"trowel-snippet-active?",   native_snippet_active},
-        {"trowel-snippet-advance",   native_snippet_advance},
-        {"trowel-set-keybinding",    native_set_keybinding},
-        {"trowel-spawn",             native_spawn},
-        {"trowel-pump-events",       native_pump_events},
+        {"trowel-register-command",  native_register_command,  TUR_NRT_VOID},
+        {"trowel-register-button",   native_register_button,   TUR_NRT_VOID},
+        {"trowel-register-hook",     native_register_hook,     TUR_NRT_VOID},
+        {"trowel-buffer-text",       native_buffer_text,       TUR_NRT_CSTR},
+        {"trowel-cursor-pos",        native_cursor_pos,        TUR_NRT_INT},
+        {"trowel-selection",         native_selection,         TUR_NRT_INT},
+        {"trowel-file-path",         native_file_path,         TUR_NRT_CSTR},
+        {"trowel-word-at-cursor",    native_word_at_cursor,    TUR_NRT_CSTR},
+        {"trowel-set-text",          native_set_text,          TUR_NRT_VOID},
+        {"trowel-insert-text",       native_insert_text,       TUR_NRT_VOID},
+        {"trowel-set-cursor",        native_set_cursor,        TUR_NRT_VOID},
+        {"trowel-set-selection",     native_set_selection,     TUR_NRT_VOID},
+        {"trowel-status-message",    native_status_message,    TUR_NRT_VOID},
+        {"trowel-focus-editor",      native_focus_editor,      TUR_NRT_VOID},
+        {"trowel-focus-repl",        native_focus_repl,        TUR_NRT_VOID},
+        {"trowel-reload-plugin",     native_reload_plugin,     TUR_NRT_BOOL},
+        {"trowel-insert-snippet",    native_insert_snippet,    TUR_NRT_VOID},
+        {"trowel-snippet-active?",   native_snippet_active,    TUR_NRT_BOOL},
+        {"trowel-snippet-advance",   native_snippet_advance,   TUR_NRT_VOID},
+        {"trowel-set-keybinding",    native_set_keybinding,    TUR_NRT_VOID},
+        {"trowel-spawn",             native_spawn,             TUR_NRT_VOID},
+        {"trowel-pump-events",       native_pump_events,       TUR_NRT_VOID},
     };
 
     for (const auto& def : natives) {
-        turi_env_register_native(env, def.name, def.fn, ctxPtr);
+        turi_env_register_native_typed(env, def.name, def.fn, ctxPtr, def.ret);
     }
 }
 
@@ -471,8 +495,8 @@ static TuriValue native_define_syntax(TuriEnv* /*env*/, TuriValue* args,
 
 void registerSyntaxNatives(TuriEnv* env, SyntaxRegistry* registry)
 {
-    turi_env_register_native(env, "trowel-define-syntax",
-                             native_define_syntax, registry);
+    turi_env_register_native_typed(env, "trowel-define-syntax",
+                             native_define_syntax, registry, TUR_NRT_VOID);
 }
 
 }  // namespace trowel

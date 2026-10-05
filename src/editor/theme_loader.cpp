@@ -336,21 +336,23 @@ void ApplyThemeToEditor(ScintillaEdit* sci, const Theme& theme) {
 
     // Fold markers: filled triangles in the line-number colour, with the
     // editor background behind them so the margin reads as transparent.
-    // fore = triangle fill, back = editor bg (no visible stroke).
-    const int foldFore = bgra(theme.lineNumberFg);
-    const int foldBack = bgra(theme.editorBg);
+    // Scintilla's AlignedPolygon uses FillStroke(back, fore): back is the
+    // fill, fore is the stroke.  So fore = editorBg (invisible stroke) and
+    // back = lineNumberFg (the visible fill).
+    const int foldFill = bgra(theme.lineNumberFg);
+    const int foldStroke = bgra(theme.editorBg);
     for (int m : {SC_MARKNUM_FOLDER, SC_MARKNUM_FOLDEROPEN,
                   SC_MARKNUM_FOLDEREND, SC_MARKNUM_FOLDEROPENMID}) {
-        sci->markerSetFore(m, foldFore);
-        sci->markerSetBack(m, foldBack);
+        sci->markerSetFore(m, foldStroke);
+        sci->markerSetBack(m, foldFill);
     }
     // Scintilla draws the fold margin with a dithered checkerboard pattern
     // by default (selbar/selbarlight).  Override both the fill and the
     // stripe colour with the editor background so the margin is solid and
     // matches the body.
-    sci->setFoldMarginColour(true, foldBack);
-    sci->setFoldMarginHiColour(true, foldBack);
-    sci->setMarginBackN(2, foldBack);
+    sci->setFoldMarginColour(true, foldStroke);
+    sci->setFoldMarginHiColour(true, foldStroke);
+    sci->setMarginBackN(2, foldStroke);
 
     // Debugger gutter markers. The breakpoint marker is a filled circle
     // (fore = fill, back = editor bg so it reads as a dot, not a block); the

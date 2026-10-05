@@ -109,6 +109,9 @@ signals:
     // The REPL reported a new working directory (OSC 7) — e.g. after `:cd`,
     // which moves the live process without a restart.
     void workingDirChanged(const QString& dir);
+    // The REPL requested a command dispatch (OSC 517).  `id` is the command id
+    // to look up in the CommandRegistry and run.
+    void commandRequested(const QString& id);
 
 private:
     void onStarted();
@@ -127,6 +130,9 @@ private:
     // signal that a switch took effect. Pinned wording upstream
     // (tests/run-flags.sh reader-name-canonical, lang-same-base-no-reset).
     void scanDialectReports(const QByteArray& bytes);
+    // P3: scan for OSC 517 command-request sequences: the REPL prints
+    // ESC ] 5 1 7 ; <command-id> {BEL | ESC \} to ask Trowel to run a command.
+    void scanCommandRequests(const QByteArray& bytes);
 
     TerminalView* view_;
     PtySession* pty_ = nullptr;
@@ -144,6 +150,8 @@ private:
     // Same idea for OSC 7, which carries a whole path and so needs a much
     // larger carry than the prompt-marker scan allows.
     QByteArray cwdTail_;
+    // Same idea for OSC 517 command requests.
+    QByteArray cmdTail_;
 };
 
 }

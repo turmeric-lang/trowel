@@ -1,5 +1,13 @@
 # Experiment flags — plan
 
+> **Status:** Not started. No `resolveExperiments` or experiment-flag
+> handling anywhere in the codebase. The plan's interim path (Trowel
+> reads `experiments.tur` and forwards `--enable=`) is unimplemented;
+> the preferred path (turmeric reads the user file itself) has not been
+> filed upstream.
+> **Related:** [`engine-selection.md`](engine-selection.md) (also not
+> started; shares the same `MakeTurInvocation` seam).
+
 Let the user pick which Turmeric experimental features are on when Trowel
 launches the REPL or evaluates a buffer. Three sources, in order of
 priority:

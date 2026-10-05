@@ -1,5 +1,15 @@
 # Multi-language syntax highlighting
 
+> **Status:** Complete. The scanner framework is built: `scanner.h`,
+> `lexers.h`, `lexer_adapter.cpp`, and per-language scanners
+> (`scanner_turmeric`, `scanner_c`, `scanner_markdown`, `scanner_json`,
+> `scanner_just`). Extended beyond the plan with `scanner_python`,
+> `scanner_sh`, `scanner_toml`, `scanner_cmake`. Nested-fence
+> delegation and per-file dispatch are live.
+> **Related:** [`sweet-exp.md`](sweet-exp.md) (complete, builds on this),
+> [`dialects-saffron-and-r7rs.md`](dialects-saffron-and-r7rs.md)
+> (complete, generalizes the dialect system further).
+
 ## Context
 
 Trowel installs the hand-written Turmeric lexer for **every** file,

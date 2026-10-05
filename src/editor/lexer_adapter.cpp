@@ -1,6 +1,8 @@
 #include "editor/scanner.h"
 
 #include "editor/dialect.h"
+#include "plugin/scanner_plugin_syntax.h"
+#include "plugin/syntax_descriptor.h"
 
 #include <ILexer.h>
 #include <Scintilla.h>
@@ -14,6 +16,23 @@ using Scintilla::IDocument;
 using Scintilla::ILexer5;
 
 namespace trowel {
+
+// Global syntax registry for plugin syntax lexers. Set by PluginHost at
+// startup; read by the ScannerLexer when Language::PluginSyntax is used.
+// The descriptor index is stored in the LexState's jsonDepth field so the
+// scanner can recover it across lines.
+namespace {
+const SyntaxRegistry* g_syntaxRegistry = nullptr;
+int g_pluginSyntaxDescIndex = 0;  // descriptor index for the current lexer
+}  // namespace
+
+void SetSyntaxRegistry(const SyntaxRegistry* reg) {
+    g_syntaxRegistry = reg;
+}
+
+void SetPluginSyntaxDescriptorIndex(int index) {
+    g_pluginSyntaxDescIndex = index;
+}
 
 // ---------------------------------------------------------------------------
 // Emitter
@@ -192,6 +211,16 @@ void ScanLine(Language lang, const ScanInput& in, LexState& st, Emitter& out) {
     case Language::R7rs:      ScanR7rsLine(in, st, out); break;
     case Language::R7rsSweet: ScanR7rsSweetLine(in, st, out); break;
     case Language::PlainText: break;  // no-op: style 0 for the whole line
+    case Language::PluginSyntax: {
+        // Recover the descriptor from the global registry.
+        if (g_syntaxRegistry && g_pluginSyntaxDescIndex >= 0 &&
+            g_pluginSyntaxDescIndex < g_syntaxRegistry->descriptors().size()) {
+            ScanPluginSyntaxLine(
+                g_syntaxRegistry->descriptors()[g_pluginSyntaxDescIndex],
+                in, st, out);
+        }
+        break;
+    }
     case Language::LanguageCount:  // not a language; fall through to the default
     case Language::Turmeric: ScanTurmericLine(in, st, out); break;
     }
@@ -207,6 +236,8 @@ int DefaultStyleFor(Language lang) {
     case Language::Toml:     return static_cast<int>(TomlStyle::Default);
     case Language::Sh:       return static_cast<int>(ShStyle::Default);
     case Language::Python:   return static_cast<int>(PyStyle::Default);
+    case Language::PluginSyntax:
+        return static_cast<int>(PluginSyntaxStyleId::Default);
     case Language::TurmericSweet:
     case Language::R7rs:
     case Language::R7rsSweet:
@@ -302,6 +333,21 @@ bool LanguageForFileName(const QString& path, Language& out) {
         out = Language::PlainText;
         return true;
     }
+
+    // Check syntax plugins (§2.2) — user-defined data-driven lexers.
+    if (g_syntaxRegistry) {
+        const int dot = lower.lastIndexOf('.');
+        if (dot >= 0 && dot + 1 < lower.size()) {
+            const QString ext = lower.mid(dot + 1);
+            const SyntaxDescriptor* desc = g_syntaxRegistry->findByExtension(ext);
+            if (desc) {
+                SetPluginSyntaxDescriptorIndex(g_syntaxRegistry->index(desc->name));
+                out = Language::PluginSyntax;
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 
@@ -475,6 +521,7 @@ public:
         case Language::R7rs:      return "r7rs";
         case Language::R7rsSweet: return "r7rs-sweet";
         case Language::PlainText: return "plaintext";
+        case Language::PluginSyntax: return "plugin-syntax";
         case Language::LanguageCount:
         case Language::Turmeric: break;
         }
@@ -738,6 +785,7 @@ QByteArray LineCommentToken(Language lang) {
     case Language::Markdown:
     case Language::Json:
     case Language::PlainText:
+    case Language::PluginSyntax:
         return {};
     case Language::LanguageCount:
         return {};

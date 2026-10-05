@@ -1,5 +1,12 @@
 # Multiple windows — plan
 
+> **Status:** Complete. All seven milestones landed — window registry,
+> New/Close Window, open routing, drag-and-drop, per-window persistence,
+> Window menu, and documentation. See the inline ✅ markers on each
+> milestone below for deviations and bugs fixed along the way.
+> **Related:** [`repl-working-directory.md`](repl-working-directory.md)
+> (complete, composes with per-window REPL).
+
 Trowel is currently a single-`MainWindow` app: one window owns the tab
 set (`buffers_`), the REPL, the splitter, and is the fixed target of the
 control socket. This plan adds real multi-window support, modeled

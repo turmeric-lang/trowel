@@ -1,5 +1,14 @@
 # Trowel — Project Plan
 
+> **Status:** v1 shipped (current release v0.3.2). All milestones M0–M5
+> landed, plus substantial post-v1 work: multi-window, tab bar, directory
+> view, LSP support + navigation, debugger support, multi-language
+> highlighting, folding, find/replace, word wrap, per-document state,
+> dialects (Saffron, R7RS, sweet), and a 29-test smoke suite. macOS, Linux,
+> and Windows all build and run. Bundled Turmeric pin is v0.62.0.
+> Remaining plans not started: [`engine-selection.md`](engine-selection.md),
+> [`experiment-flags.md`](experiment-flags.md), [`minimap.md`](minimap.md).
+
 Trowel is a C/C++ text editor built with CMake that embeds Scintilla and a
 terminal emulator in draggable split panes. It is purpose-built for
 [turmeric](https://github.com/turmeric-lang/turmeric): the editor speaks to a

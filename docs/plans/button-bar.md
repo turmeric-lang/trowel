@@ -1,5 +1,10 @@
 # Button bar — plan
 
+> **Status:** Complete. The toolbar is implemented (`setupToolBar()` in
+> `main_window.cpp`) with `NerdIcon()` from `src/app/icon_font.{h,cpp}`.
+> Grew beyond the two planned actions to include Debug, Restart REPL,
+> Clear, Format, Outline, and Toggle Split.
+
 Add a thin toolbar spanning above the editor + REPL split, holding
 icon-only actions. First two: **Evaluate File** and **Evaluate Selection**.
 Room to grow — restart REPL, save, stop, split-orientation, etc.

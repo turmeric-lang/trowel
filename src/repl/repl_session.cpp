@@ -293,6 +293,7 @@ void ReplSession::onPtyData(const QByteArray& bytes) {
 
     scanCwdReports(bytes);
     scanDialectReports(bytes);
+    scanCommandRequests(bytes);
 
     emit dataReceived(bytes);
 }
@@ -424,6 +425,47 @@ void ReplSession::applyCwdReport(const QByteArray& uri) {
     lastWorkingDir_ = dir;
     view_->showBanner(QString("[trowel] repl cwd is now %1").arg(displayPath(dir)));
     emit workingDirChanged(dir);
+}
+
+// P3: scan for OSC 517 command-request sequences.
+// Format: ESC ] 5 1 7 ; <command-id> {BEL | ESC \}
+// The REPL prints this to ask Trowel to run a command by id.  Trowel looks
+// up the id in the CommandRegistry and runs it.
+void ReplSession::scanCommandRequests(const QByteArray& bytes) {
+    static constexpr char kCmdPrefix[] = "\x1b]517;";
+    static constexpr int kCmdPrefixLen = sizeof(kCmdPrefix) - 1;
+    static constexpr int kMaxCarry = 1024;
+
+    QByteArray buf = cmdTail_ + bytes;
+    cmdTail_.clear();
+
+    int i = 0;
+    while ((i = buf.indexOf(kCmdPrefix, i)) >= 0) {
+        const int start = i + kCmdPrefixLen;
+        int end = -1;
+        int next = -1;
+        for (int j = start; j < buf.size(); ++j) {
+            const char c = buf.at(j);
+            if (c == '\x07') { end = j; next = j + 1; break; }
+            if (c == '\x1b') {
+                if (j + 1 >= buf.size()) break;  // partial ST
+                if (buf.at(j + 1) == '\\') { end = j; next = j + 2; }
+                break;
+            }
+        }
+        if (end < 0) {
+            if (buf.size() - i <= kMaxCarry) cmdTail_ = buf.mid(i);
+            return;
+        }
+        const QString id = QString::fromUtf8(buf.mid(start, end - start));
+        if (!id.isEmpty()) emit commandRequested(id);
+        i = next;
+    }
+
+    const int lastEsc = buf.lastIndexOf('\x1b');
+    if (lastEsc >= 0 && buf.size() - lastEsc < kCmdPrefixLen) {
+        cmdTail_ = buf.mid(lastEsc);
+    }
 }
 
 void ReplSession::onStarted() {

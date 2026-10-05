@@ -44,6 +44,10 @@ enum class Language : int {
     // The fallback for unknown files stays Turmeric, so extensionless Turmeric
     // scripts and shebang files are not misclassified.
     PlainText,
+    // Data-driven lexer configured from a Turmeric syntax descriptor
+    // (§2.2 syntax plugins). The descriptor index is stored in the
+    // leaf-language bit field (jsonDepth slot) at scan time.
+    PluginSyntax,
 
     // Keep last: the count, which the Markdown guest field's width is asserted
     // against in lexer_adapter.cpp. The guest field is four bits with 15 as its
@@ -245,11 +249,30 @@ enum class PyStyle : int {
     Identifier,
 };
 
+// Data-driven syntax plugin styles. These are the Scintilla style IDs the
+// plugin syntax scanner paints with. The theme maps them to colors the same
+// way it maps the built-in language styles.
+enum class PluginSyntaxStyleId : int {
+    Default = 174,
+    Keyword,
+    Comment,
+    String,
+    Number,
+    Operator,
+    Identifier,
+    Preprocessor,
+    Type,
+    Function,
+    Variable,
+    Constant,
+    Error,
+};
+
 // Number of distinct colors the rainbow-bracket cycle uses.
 inline constexpr int kRainbowLevels = 7;
 // Highest style id any scanner can emit (inclusive). EditorView applies the
 // editor font across 0..kMaxStyleId.
-inline constexpr int kMaxStyleId = static_cast<int>(PyStyle::Identifier);
+inline constexpr int kMaxStyleId = static_cast<int>(PluginSyntaxStyleId::Error);
 
 // The line-comment token for `lang`, or empty when the language has no
 // line comment (JSON, Markdown, PlainText).  Used by Edit > Toggle Comment.
@@ -263,5 +286,11 @@ bool HasFoldStrategy(Language lang);
 // happens via ILexer5::Release(). When `rainbow` is true, brackets are styled
 // by nesting depth (Rainbow0..); otherwise they use flat per-language styles.
 Scintilla::ILexer5* CreateLexerForLanguage(Language lang, bool rainbow = true);
+
+// Set the global syntax registry and descriptor index for plugin syntax lexers.
+// Called by PluginHost before creating a PluginSyntax lexer.
+class SyntaxRegistry;
+void SetSyntaxRegistry(const SyntaxRegistry* reg);
+void SetPluginSyntaxDescriptorIndex(int index);
 
 }

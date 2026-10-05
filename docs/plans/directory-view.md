@@ -1,5 +1,10 @@
 # Directory View
 
+> **Status:** Complete. `DirectoryView` inherits `TabContent`
+> (`src/app/tab_content.h`, `src/app/directory_view.{h,cpp}`), wired into
+> `MainWindow` with `File → Open Directory…`, in-place file activation,
+> and session persistence (`dir://` prefix encoding).
+
 A netrw-inspired directory browser that lives inside a tab, alongside editor
 tabs. Opening a directory (via `File → Open Directory…` or the existing
 `File → Open…` dialog if a directory is selected) creates a directory tab.

@@ -1,5 +1,11 @@
 # REPL working directory — plan
 
+> **Status:** Complete. B1 (CWD indicator in the startup banner), B2
+> (Run ▸ Restart REPL In… + `repl.get_cwd` / `repl.set_cwd` control
+> commands), B3a (OSC 7 consumption in `ReplSession`), and B3b (upstream
+> `:cd` / `:pwd` in `tur repl`, turmeric#738) all shipped. See the
+> inline ✅ markers below for deviations.
+
 Give the user explicit control over, and visibility into, the working
 directory of a window's `tur repl` session: an indicator showing where
 the REPL is rooted, a GUI command to change it, and a `:cd`-style

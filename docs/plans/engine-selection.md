@@ -1,5 +1,12 @@
 # Engine selection — plan
 
+> **Status:** Not started. No `TurInvocation` seam, no engine setting in
+> preferences, no `resolveExperiments`. Part A (the shared `tur` argv
+> seam) is independent but hasn't landed; Parts B–E are blocked on
+> `tur --engine`, which does not exist upstream.
+> **Related:** [`experiment-flags.md`](experiment-flags.md) (also not
+> started; shares the same argv seam).
+
 **Sequenced after Turmeric's `docs/upcoming/engine-selection-plan.md`.** Trowel
 cannot express an engine choice today: engine selection in `tur` *is the
 subcommand* (`tur run` / `tur interpret` / `tur jit`), and there is no

@@ -1,5 +1,11 @@
 # Tab bar — plan
 
+> **Status:** Complete. `TabBar` (`src/app/tab_bar.{h,cpp}`) and the
+> multi-buffer model (`Buffer` struct, `QStackedWidget`) are live.
+> `setClosable(int, bool)` was added per-index (not as a whole-bar flag)
+> to support the non-closable REPL-pane tabs in
+> [`debugger-support.md`](debugger-support.md).
+
 Add a horizontal tab strip below the button bar and above the
 editor/REPL splitter. Each tab represents one open buffer (file or
 scratch). `File > Open` opens an **additional** buffer instead of

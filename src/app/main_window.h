@@ -31,6 +31,9 @@ class BreakpointModel;
 class DebugSession;
 class DirectoryView;
 class EditorView;
+class CommandPalette;
+class CommandRegistry;
+class PluginHost;
 class ProjectRunner;
 class ReplPane;
 class TraceRunner;
@@ -110,6 +113,13 @@ public slots:
     void showOutline();
     // List every use of the symbol at the caret, across the workspace.
     void rebuildDialectMenu();
+    // Focus the editor / REPL panes.  Public so the plugin natives can call
+    // them (trowel:focus-editor, trowel:focus-repl).
+    void focusEditor();
+    void focusRepl();
+    // Add one icon button (or a separator) to the vertical side bar.  Public
+    // so the plugin native trowel:register-button can call it.
+    void addSideBarAction(QAction* action);
     void showSignatureHelp();
     void findSymbolInProject();
     void findSymbolInProjectFor(const QString& query);
@@ -171,12 +181,15 @@ private slots:
     void openDirectoryDialog();
     bool save();
     bool saveAs();
+    // Debug: prompt for a Turmeric expression, eval it in the plugin host's
+    // in-process env, and show the result in the status bar (P0).
+    void evalTurmeric();
+    // Open the command palette (P1).
+    void openCommandPalette();
     Dialect replDialectForActiveBuffer() const;
     void restartRepl();
     void restartReplInDirectory();
     void clearRepl();
-    void focusEditor();
-    void focusRepl();
     void toggleReplEditorFocus();
     void runBuffer();
     void runProject();
@@ -241,6 +254,9 @@ public:
     // not fire aboutToShow the way a real click does.
     void updateEditActionsEnabled();
 
+    // Public so the control socket handler can run commands by id.
+    CommandRegistry* commandRegistry() { return commandRegistry_; }
+
 public:
     // One visited caret position, for Back/Forward.
     //
@@ -270,9 +286,10 @@ private:
     void setupUi();
     void setupMenus();
     void setupToolBar();
-    // Add one icon button (or a separator) to the vertical side bar. The button
-    // takes its icon, tooltip, enabled and checked state from `action`.
-    void addSideBarAction(QAction* action);
+    // P1: walk the menu bar and register every leaf QAction into the command
+    // registry, deriving the id from the action text and the category from
+    // the menu it lives in.
+    void registerBuiltinCommands();
     void addSideBarSeparator();
     void updateWindowTitle();
     bool maybeSaveBuffer(int index);
@@ -448,6 +465,13 @@ private:
     QVector<NavEntry> navBack_;
     QVector<NavEntry> navForward_;
     QFont editorFont_;
+    // In-process Turmeric plugin host (P0+).  Owned by the window; null when
+    // libturi is not linked (platforms with no prebuilt Turmeric).
+    std::unique_ptr<PluginHost> pluginHost_;
+    // Command registry + palette (P1).  The registry holds every command the
+    // palette can show; the palette is the fuzzy-filtering popup.
+    CommandRegistry* commandRegistry_ = nullptr;
+    CommandPalette* commandPalette_ = nullptr;
 };
 
 }

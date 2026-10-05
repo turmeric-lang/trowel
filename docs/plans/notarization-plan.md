@@ -1,5 +1,11 @@
 # Notarization & Stapling Plan for Trowel.app
 
+> **Status:** Complete. `scripts/notarize-app.sh` landed. Guide at
+> [`docs/guides/signing-and-notarization.md`](../guides/signing-and-notarization.md)
+> covers the full sign → notarize → staple flow.
+> Prerequisite: [`codesigning-plan.md`](codesigning-plan.md) (also
+> complete).
+
 Follow-up to `codesigning-plan.md`. Signing is landed; the bundle is a valid
 Developer ID signed app and passes `spctl --assess`. Notarization is what
 lets a downloaded `Trowel.app` launch on someone else's Mac without the

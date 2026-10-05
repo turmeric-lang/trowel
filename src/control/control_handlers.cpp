@@ -5,6 +5,7 @@
 #include "app/document_state.h"
 #include "app/main_window.h"
 #include "app/window_manager.h"
+#include "plugin/command_registry.h"
 #include "debug/breakpoint_model.h"
 #include "debug/debug_session.h"
 #include "editor/editor_view.h"
@@ -1915,6 +1916,29 @@ void HandleWaitProcessExit(MainWindow* w, QPointer<ControlConnection> conn,
 
 }  // namespace
 
+// Run a command by id from the CommandRegistry. Used by the smoke tests
+// to invoke plugin-registered commands (e.g. "snippets.expand").
+void HandleCommandRun(MainWindow* w, const QJsonObject& args,
+                      const Reply& reply) {
+    const QString id = args.value("id").toString();
+    if (id.isEmpty()) {
+        ReplyErr(reply, "bad_args", "expected non-empty \"id\"");
+        return;
+    }
+    auto* reg = w->commandRegistry();
+    if (!reg) {
+        ReplyErr(reply, "no_registry", "command registry not available");
+        return;
+    }
+    if (!reg->find(id)) {
+        ReplyErr(reply, "not_found",
+                 QString("no command with id \"%1\"").arg(id));
+        return;
+    }
+    reg->run(id);
+    reply(Ok(), nullptr);
+}
+
 void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
               const QString& cmd, const QJsonObject& args, Reply reply) {
     if (!windows) { ReplyErr(reply, "no_registry", "window registry not available"); return; }
@@ -1940,6 +1964,7 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "window.set_splitter")  { HandleWindowSetSplitter(w, args, reply); return; }
     if (cmd == "menu.invoke")          { HandleMenuInvoke(w, args, reply); return; }
     if (cmd == "menu.list")            { HandleMenuList(w, args, reply); return; }
+    if (cmd == "command.run")          { HandleCommandRun(w, args, reply); return; }
     if (cmd == "window.screenshot")    { HandleWindowScreenshot(w, args, reply); return; }
 
     if (cmd == "editor.open")          { HandleEditorOpen(w, args, reply); return; }

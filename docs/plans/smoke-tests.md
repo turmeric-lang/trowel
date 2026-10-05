@@ -1,5 +1,12 @@
 # Trowel Smoke Test Suite — Plan
 
+> **Status:** Complete. `tests/smoke/conftest.py` and 29 test files
+> covering startup, editor, REPL, run buffer, LSP, debugger,
+> multi-window, drag-and-drop, folding, find, format, dialects, and
+> more. The suite runs on macOS and Linux via `just smoke`.
+> **Related:** [`socket-api.md`](socket-api.md) (complete, the control
+> socket the suite drives).
+
 An end-to-end smoke suite that drives a real Trowel process through the
 control socket ([socket-api.md](socket-api.md)) and asserts on observable
 state. Complements the Catch2 unit tests in `PLAN.md §10` — these tests

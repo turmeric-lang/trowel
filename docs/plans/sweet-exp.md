@@ -1,5 +1,13 @@
 # Sweet-expression support: run + highlight
 
+> **Status:** Complete. `ScanTurmericSweetLine` and the `SweetMarker`
+> style are live in `scanner_turmeric.cpp`; `Dialect::TurmericSweet` in
+> `dialect.h`; `run_buffer.cpp` handles sweet dialects via `:run`
+> rather than `load`. Generalized beyond this plan into a full dialect
+> system — see [`dialects-saffron-and-r7rs.md`](dialects-saffron-and-r7rs.md).
+> Prerequisite: [`multi-language-highlighting.md`](multi-language-highlighting.md)
+> (complete).
+
 **Sequenced after `docs/plans/multi-language-highlighting.md`** — sweet mode
 becomes a variant of the `TurmericScanner` inside the scanner framework that
 plan introduces, and reuses its `Language` dispatch and markdown fence

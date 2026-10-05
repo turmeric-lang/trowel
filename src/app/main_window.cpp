@@ -17,6 +17,10 @@
 #include "editor/theme_loader.h"
 #include "lsp/lsp_manager.h"
 #include "platform/shortcuts.h"
+#include "plugin/command_palette.h"
+#include "plugin/command_registry.h"
+#include "plugin/hook_bus.h"
+#include "plugin/plugin_host.h"
 #include "repl/project_runner.h"
 #include "trace/trace_runner.h"
 #include "repl/repl_session.h"
@@ -28,6 +32,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QShortcut>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
@@ -104,6 +109,21 @@ MainWindow::MainWindow(QWidget* parent)
     updateEditorActionsEnabled();
     updateNavActionsEnabled();
     updateWindowTitle();
+
+    // P0: create the in-process Turmeric plugin host.  The constructor evals
+    // "(+ 1 2)" as a linker smoke test and logs the result.
+    pluginHost_ = std::make_unique<PluginHost>(this);
+
+    // P1: command registry + palette.  Built-in commands are registered in
+    // registerCommands() (called from setupMenus, after the QActions exist).
+    commandRegistry_ = new CommandRegistry(this);
+    commandPalette_ = new CommandPalette(commandRegistry_, this);
+
+    // P2: wire the plugin host with the registry and hook bus, then load
+    // plugins.  The hook bus dispatches C++ signals to Turmeric closures.
+    auto* hookBus = new HookBus(pluginHost_.get(), this);
+    pluginHost_->setRegistry(commandRegistry_);
+    pluginHost_->setHookBus(hookBus);
 
     connect(&Settings::instance(), &Settings::changed,
             this, &MainWindow::onSettingsChanged);
@@ -762,6 +782,26 @@ void MainWindow::setupMenus() {
     connect(aboutAction_, &QAction::triggered, this, &MainWindow::showAbout);
     helpMenu->addAction(aboutAction_);
 #endif
+
+    // --- Debug menu (P0) ---------------------------------------------------
+    // Temporary surface for the in-process Turmeric eval.  Will grow as the
+    // plugin system does (reload-plugin, hook inspection, ...).
+    auto* debugMenu = menuBar()->addMenu("&Debug");
+    auto* evalTurmericAction = new QAction("Eval Turmeric...", this);
+    evalTurmericAction->setToolTip(
+        "Evaluate a Turmeric expression in the in-process plugin host");
+    connect(evalTurmericAction, &QAction::triggered, this,
+            &MainWindow::evalTurmeric);
+    debugMenu->addAction(evalTurmericAction);
+
+    // P1: register built-in commands into the command registry now that all
+    // QActions exist, and install the Cmd-P shortcut for the palette.
+    registerBuiltinCommands();
+    new QShortcut(QKeySequence("Ctrl+P"), this, [this] { openCommandPalette(); });
+
+    // P6: load the user keymap after built-in commands are registered so
+    // trowel-set-keybinding can override their shortcuts.
+    if (pluginHost_) pluginHost_->loadKeymap();
 }
 
 namespace {
@@ -1115,6 +1155,16 @@ void MainWindow::connectBufferSignals(int index) {
     }
 
     auto* editor = static_cast<EditorView*>(view);
+    // P4: install the Tab-key event filter for snippet expansion.
+    if (pluginHost_) pluginHost_->installSnippetFilter(editor);
+    // P2: fire the buffer:changed hook when the editor content changes.
+    if (pluginHost_ && pluginHost_->hookBus()) {
+        connect(editor, &EditorView::contentChanged, this,
+                [this](int) {
+            if (pluginHost_ && pluginHost_->hookBus())
+                pluginHost_->hookBus()->dispatch("buffer:changed");
+        });
+    }
     // Caret movement re-reads the diagnostic under the cursor. updateUi also
     // fires for selection and scroll changes, which is harmless — the readout
     // is cheap and idempotent.
@@ -1682,6 +1732,85 @@ void MainWindow::rebuildWindowMenu() {
 void MainWindow::newWindow() {
     if (!windows_) return;
     windows_->newWindow();
+}
+
+void MainWindow::evalTurmeric() {
+    if (!pluginHost_ || !pluginHost_->isAvailable()) {
+        statusBar()->show();
+        statusBar()->showMessage(
+            QStringLiteral("Plugin host unavailable (libturi not linked)"), 3000);
+        return;
+    }
+    bool ok = false;
+    const QString source = QInputDialog::getText(
+        this, QStringLiteral("Eval Turmeric"),
+        QStringLiteral("Turmeric expression:"),
+        QLineEdit::Normal, QStringLiteral("(+ 1 2)"), &ok);
+    if (!ok || source.isEmpty()) return;
+    const QString result = pluginHost_->eval(source);
+    statusBar()->show();
+    statusBar()->showMessage(result, 5000);
+}
+
+void MainWindow::openCommandPalette() {
+    if (!commandPalette_) return;
+    commandPalette_->popup(this);
+}
+
+void MainWindow::registerBuiltinCommands() {
+    if (!commandRegistry_) return;
+
+    // Walk the menu bar: for each top-level menu, collect its leaf actions
+    // and register them.  The category is the menu title (sans "&"), the id
+    // is a slugified version of the action text, and the handler triggers
+    // the QAction.
+    const auto slugify = [](const QString& s) {
+        QString out;
+        for (const auto& ch : s) {
+            if (ch.isLetterOrNumber()) out += ch.toLower();
+            else if (ch == '&' || ch == ' ') ; // skip
+            else if (!out.isEmpty() && out.back() != '-') out += '-';
+        }
+        while (!out.isEmpty() && out.back() == '-') out.chop(1);
+        return out;
+    };
+
+    for (auto* menuAction : menuBar()->actions()) {
+        auto* menu = menuAction->menu();
+        if (!menu) continue;
+        const QString category = menu->title().remove('&');
+
+        std::function<void(QMenu*, const QString&)> collect;
+        collect = [&](QMenu* m, const QString& cat) {
+            for (auto* a : m->actions()) {
+                if (a->menu()) {
+                    collect(a->menu(), cat);
+                } else if (!a->isSeparator() && !a->text().isEmpty()) {
+                    const QString title = a->text().remove('&');
+                    const QString id = "trowel." + slugify(title);
+                    CommandEntry cmd;
+                    cmd.id = id;
+                    cmd.title = title;
+                    cmd.category = cat;
+                    if (!a->shortcuts().isEmpty())
+                        cmd.shortcut = a->shortcut();
+                    auto* actionPtr = a;
+                    cmd.handler = [actionPtr] { actionPtr->trigger(); };
+                    commandRegistry_->add(cmd);
+                }
+            }
+        };
+        collect(menu, category);
+    }
+
+    // Register the command palette itself.
+    CommandEntry paletteCmd;
+    paletteCmd.id = "trowel.command-palette";
+    paletteCmd.title = "Command Palette";
+    paletteCmd.category = "View";
+    paletteCmd.shortcut = QKeySequence("Ctrl+P");
+    paletteCmd.handler = [this] { openCommandPalette(); };
+    commandRegistry_->add(paletteCmd);
 }
 
 void MainWindow::quitApp() {
@@ -3292,6 +3421,26 @@ void MainWindow::startSession() {
     // nothing at all (a blank window roots the REPL at $HOME).
     repl_ = new ReplSession(terminal_, this);
     repl_->start(replWorkingDir(), replDialectForActiveBuffer());
+
+    // P3: bridge REPL command requests to the command registry.  The REPL
+    // prints an OSC 517 sequence to ask Trowel to run a command by id.
+    if (commandRegistry_) {
+        connect(repl_, &ReplSession::commandRequested, this,
+                [this](const QString& id) {
+            if (commandRegistry_) commandRegistry_->run(id);
+        });
+    }
+
+    // P2: load plugins after the session is fully set up (REPL, buffers,
+    // registry, hook bus all ready).  Plugins register commands and hooks
+    // that reference these.
+    // P5: load syntax plugins before regular plugins so syntax descriptors
+    // are available when editors are opened.
+    if (pluginHost_) {
+        pluginHost_->loadSyntaxPlugins();
+        pluginHost_->loadAll();
+        pluginHost_->startEventLoopPump();
+    }
 }
 
 void MainWindow::applySessionState(const QVariantMap& state) {

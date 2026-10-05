@@ -1,5 +1,9 @@
 # Minimap — plan
 
+> **Status:** Not started. No `minimap_view.{h,cpp}` in the source tree.
+> The plan's prerequisite — the `StyleSink` refactor and
+> `StyleForegroundTable` — has not landed either.
+
 A VSCode-style minimap down the side of the editor: a block-rendered, syntax-colored
 overview of the whole buffer with a draggable viewport slider. Off by default behind
 `editor/minimap` until phase 3 lands.

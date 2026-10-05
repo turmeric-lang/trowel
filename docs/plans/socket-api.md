@@ -1,5 +1,13 @@
 # Trowel Control Socket — Plan
 
+> **Status:** Complete. `ControlServer`, `ControlConnection`, and
+> `ControlHandlers` are live (`src/control/`). The command surface has
+> grown well beyond the original plan — `window.drop`, `window.list`,
+> `lsp.*`, `debug.*`, `repl.get_cwd` / `repl.set_cwd`, and more. NDJSON
+> framing over a Unix domain socket, off by default.
+> **Related:** [`smoke-tests.md`](smoke-tests.md) (complete, drives the
+> socket).
+
 A small local IPC surface for driving a running Trowel instance from an
 external process. Intended for automated smoke tests (see
 [smoke-tests.md](smoke-tests.md)), scripted demos, and eventual editor

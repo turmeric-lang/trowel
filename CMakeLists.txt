@@ -107,6 +107,22 @@ add_library(trowel_lib STATIC
     src/debug/timeline_strip.h
     src/debug/debugger_view.cpp
     src/debug/debugger_view.h
+    src/plugin/plugin_host.cpp
+    src/plugin/plugin_host.h
+    src/plugin/plugin_natives.cpp
+    src/plugin/plugin_natives.h
+    src/plugin/hook_bus.cpp
+    src/plugin/hook_bus.h
+    src/plugin/snippet_session.cpp
+    src/plugin/snippet_session.h
+    src/plugin/command_registry.cpp
+    src/plugin/command_registry.h
+    src/plugin/command_palette.cpp
+    src/plugin/command_palette.h
+    src/plugin/syntax_descriptor.cpp
+    src/plugin/syntax_descriptor.h
+    src/plugin/scanner_plugin_syntax.cpp
+    src/plugin/scanner_plugin_syntax.h
     ${TROWEL_RESOURCES}
 )
 target_include_directories(trowel_lib PUBLIC src)
@@ -260,6 +276,31 @@ else()
     message(WARNING
         "No prebuilt Turmeric for ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}; "
         "Trowel will fall back to `tur` on PATH at runtime.")
+endif()
+
+# ---- Link libturi (in-process Turmeric eval) into trowel_lib ---------------
+# The prebuilt archive fetched above ships lib/libturi.a and the C embedding
+# headers under include/turi/.  Linking it lets the PluginHost evaluate Turmeric
+# source in-process without spawning a child.  The archive layout is the prefix
+# one (lib/ include/ at the archive root) for every pinned version past v0.46.0.
+if(_turmeric_key)
+    target_link_libraries(trowel_lib PRIVATE
+        ${turmeric_prebuilt_SOURCE_DIR}/lib/libturi.a
+        ${turmeric_prebuilt_SOURCE_DIR}/lib/libturt_runtime.a
+        ${turmeric_prebuilt_SOURCE_DIR}/lib/libturt_preamble.a
+    )
+    target_include_directories(trowel_lib PRIVATE
+        ${turmeric_prebuilt_SOURCE_DIR}/include
+    )
+    # libturi needs pthread and dl (statically linked, so repeat them here).
+    find_library(PTHREAD_LIBRARY pthread)
+    if(PTHREAD_LIBRARY)
+        target_link_libraries(trowel_lib PRIVATE ${PTHREAD_LIBRARY})
+    endif()
+    find_library(DL_LIBRARY dl)
+    if(DL_LIBRARY)
+        target_link_libraries(trowel_lib PRIVATE ${DL_LIBRARY})
+    endif()
 endif()
 
 if(APPLE)

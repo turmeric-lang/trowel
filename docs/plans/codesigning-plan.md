@@ -1,5 +1,12 @@
 # Codesigning Plan for Trowel.app
 
+> **Status:** Complete. `scripts/codesign-app.sh`,
+> `resources/trowel.entitlements`, and the `TROWEL_CODESIGN_IDENTITY` /
+> `TROWEL_CODESIGN_ENTITLEMENTS` CMake variables all landed. Guide at
+> [`docs/guides/signing-and-notarization.md`](../guides/signing-and-notarization.md).
+> Follow-up: [`notarization-plan.md`](notarization-plan.md) (also
+> complete).
+
 Sign the macOS `Trowel.app` bundle produced by the CMake build so it can be
 distributed outside the local dev box without Gatekeeper quarantining it, and
 so the bundled `tur` binary staged under `Contents/Resources/turmeric/`

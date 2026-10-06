@@ -211,8 +211,9 @@ EditorView::EditorView(QWidget *parent)
   // arrive on this signal, so filter to actual content changes — otherwise
   // painting diagnostics would itself look like an edit and loop.
   connect(sci_, &ScintillaEditBase::modified, this,
-          [this](Scintilla::ModificationFlags type, Scintilla::Position,
-                 Scintilla::Position, Scintilla::Position, const QByteArray &,
+          [this](Scintilla::ModificationFlags type,
+                 Scintilla::Position position, Scintilla::Position,
+                 Scintilla::Position, const QByteArray &,
                  Scintilla::Position, Scintilla::FoldLevel,
                  Scintilla::FoldLevel) {
             constexpr auto kContentChange =
@@ -238,11 +239,12 @@ EditorView::EditorView(QWidget *parent)
             updateLineNumberWidth();
             // The minimap's strip cache is keyed on document lines; an edit
             // dirties everything from the edit point to EOF because lexer state
-            // cascades forward.
+            // cascades forward. Use the modification position, not the caret —
+            // the caret may have moved on by the time this fires.
             if (minimap_ && minimap_->isVisible())
               minimap_->invalidateLines(
-                  static_cast<int>(sci_->lineFromPosition(
-                      static_cast<sptr_t>(sci_->currentPos()))),
+                  static_cast<int>(
+                      sci_->lineFromPosition(static_cast<sptr_t>(position))),
                   -1);
             emit contentChanged(docVersion_);
           });

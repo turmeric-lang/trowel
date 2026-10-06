@@ -269,7 +269,7 @@ bool Settings::rememberDocumentState() const {
 
 bool Settings::minimapEnabled() const {
     const QJsonValue v = impl_->values.value("editor.minimap");
-    return v.isBool() ? v.toBool() : false;
+    return v.isBool() ? v.toBool() : true;
 }
 
 void Settings::setMinimapEnabled(bool enabled) {

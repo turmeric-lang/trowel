@@ -56,16 +56,30 @@ protected:
 
 private:
   static constexpr int kStripLines = 512;
-  static constexpr int kPhase1LineCap = 200000;
+  // Raised from 200k (phase 1) to 1M (phase 2): lazy strip rendering plus
+  // the render debounce mean only the visible 2-3 strips are ever colourised
+  // on the GUI thread, so total document size no longer drives render cost.
+  // Phase 3 removes the cap entirely by moving rendering off-thread.
+  static constexpr int kLineCap = 1000000;
+  // Maximum number of rendered (non-null-image) strips kept in memory. The
+  // visible window is 2-3 strips; the rest are evicted to bound memory on
+  // large files. Each strip image is ~widthPx * kStripLines * linePx * 4
+  // bytes, so 16 strips is a few MB.
+  static constexpr int kMaxStrips = 16;
 
   struct Strip {
     int firstLine = 0;
     QImage image;
     bool dirty = true;
+    quint64 lastUsed = 0; // bumped on each access for LRU eviction
   };
 
   Strip &stripFor(int docLine);
   void renderStrip(Strip &s);
+  // Drop the oldest rendered strips until at most kMaxStrips remain. Called
+  // at the end of paintEvent so the cap tracks the working set, not the
+  // document size.
+  void evictStrips();
 
   // The whole doc-line <-> pixel mapping funnels through these two. Wrap
   // and folding are both on now, so they go through visible/doc-line
@@ -81,6 +95,7 @@ private:
 
   ScintillaEdit *sci_;
   QVector<Strip> strips_;
+  quint64 generation_ = 0; // monotonic access counter for LRU eviction
   QHash<int, QColor> styleFg_;
   QColor bg_, sliderBg_, sliderHoverBg_, sliderActiveBg_;
   int colPx_ = 1, linePx_ = 2;
@@ -89,6 +104,7 @@ private:
   bool dragging_ = false;
   bool hovered_ = false;
   int dragGrabDy_ = 0;
+  QTimer renderDebounce_; // coalesces bursts of invalidations into one repaint
 };
 
 } // namespace trowel

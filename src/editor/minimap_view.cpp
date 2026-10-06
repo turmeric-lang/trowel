@@ -8,6 +8,8 @@
 #include <QPainter>
 #include <QWheelEvent>
 
+#include <limits>
+
 namespace trowel {
 
 MinimapView::MinimapView(ScintillaEdit *sci, QWidget *parent)
@@ -19,6 +21,13 @@ MinimapView::MinimapView(ScintillaEdit *sci, QWidget *parent)
   setMouseTracking(true);
   setFixedWidth(widthPx_);
   hide();
+
+  // Coalesce bursts of invalidations (e.g. rapid keystrokes) into a single
+  // repaint. The slider still follows scroll immediately via
+  // syncToEditorScroll; only strip re-renders are deferred.
+  renderDebounce_.setSingleShot(true);
+  renderDebounce_.setInterval(60);
+  connect(&renderDebounce_, &QTimer::timeout, this, [this] { update(); });
 }
 
 void MinimapView::setTheme(const Theme &theme) {
@@ -158,6 +167,7 @@ MinimapView::Strip &MinimapView::stripFor(int docLine) {
     strips_.append(
         Strip{static_cast<int>(strips_.size()) * kStripLines, QImage(), true});
   }
+  strips_[stripIdx].lastUsed = ++generation_;
   return strips_[stripIdx];
 }
 
@@ -179,10 +189,11 @@ void MinimapView::renderStrip(Strip &s) {
     return;
   }
 
-  // Phase 1: colourise the strip range on the GUI thread before fetching
-  // styles. This is safe because strips are small (512 lines) and only the
-  // visible ones are rendered. The cap (kPhase1LineCap) prevents pathological
-  // files from reaching this path at all.
+  // Colourise the strip range on the GUI thread before fetching styles.
+  // This is safe because strips are small (512 lines) and only the visible
+  // ones are rendered. The cap (kLineCap) prevents pathological files from
+  // reaching this path at all; phase 3 removes the cap by moving this off
+  // the GUI thread.
   if (static_cast<sptr_t>(startPos) > sci_->endStyled()) {
     sci_->colourise(startPos, endPos);
   }
@@ -237,8 +248,9 @@ void MinimapView::paintEvent(QPaintEvent *) {
   if (!enabled_ || !sci_)
     return;
 
-  // Phase 1 cap: hide the widget for pathological files.
-  if (static_cast<sptr_t>(sci_->lineCount()) > kPhase1LineCap) {
+  // Cap: hide the widget for pathological files. Phase 2 raises this to 1M;
+  // phase 3 removes it by moving rendering off-thread.
+  if (static_cast<sptr_t>(sci_->lineCount()) > kLineCap) {
     QPainter p(this);
     p.fillRect(rect(), bg_);
     return;
@@ -271,6 +283,35 @@ void MinimapView::paintEvent(QPaintEvent *) {
   QColor sliderColor =
       dragging_ ? sliderActiveBg_ : (hovered_ ? sliderHoverBg_ : sliderBg_);
   p.fillRect(sr, sliderColor);
+
+  // Bound memory: evict the oldest rendered strips beyond the working set.
+  evictStrips();
+}
+
+void MinimapView::evictStrips() {
+  // Count rendered strips. If over the cap, drop the least-recently-used
+  // ones — clearing their image and marking them dirty so they re-render
+  // on next access. The visible window is 2-3 strips, so the cap of 16
+  // gives plenty of headroom while bounding memory on large files.
+  int rendered = 0;
+  for (const Strip &s : strips_)
+    if (!s.image.isNull())
+      ++rendered;
+  while (rendered > kMaxStrips) {
+    int oldestIdx = -1;
+    quint64 oldestGen = std::numeric_limits<quint64>::max();
+    for (int i = 0; i < strips_.size(); ++i) {
+      if (!strips_[i].image.isNull() && strips_[i].lastUsed < oldestGen) {
+        oldestGen = strips_[i].lastUsed;
+        oldestIdx = i;
+      }
+    }
+    if (oldestIdx < 0)
+      break;
+    strips_[oldestIdx].image = QImage();
+    strips_[oldestIdx].dirty = true;
+    --rendered;
+  }
 }
 
 // --- Interaction ---
@@ -337,7 +378,7 @@ void MinimapView::leaveEvent(QEvent *) {
 
 void MinimapView::invalidateAll() {
   strips_.clear();
-  update();
+  renderDebounce_.start(); // coalesces with any pending invalidation
 }
 
 void MinimapView::invalidateLines(int firstLine, int lastLine) {
@@ -348,7 +389,7 @@ void MinimapView::invalidateLines(int firstLine, int lastLine) {
     if (i < strips_.size())
       strips_[i].dirty = true;
   }
-  update();
+  renderDebounce_.start(); // restarts, coalescing a burst of edits
 }
 
 void MinimapView::syncToEditorScroll() {

@@ -29,6 +29,7 @@ Trowel decides where a file opens.
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+,` | Pick font… |
+| `Alt+M` | Toggle minimap |
 | `Ctrl+Tab` | Next tab |
 | `Ctrl+Shift+Tab` | Previous tab |
 

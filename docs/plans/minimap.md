@@ -1,17 +1,19 @@
 # Minimap — plan
 
-> **Status:** Phase 1 shipped. `MinimapView` (`src/editor/minimap_view.{h,cpp}`)
+> **Status:** Phases 1–2 shipped. `MinimapView` (`src/editor/minimap_view.{h,cpp}`)
 > is in the tree, block-rendered via `SCI_GETSTYLEDTEXT` on the GUI thread,
-> off by default behind `editor.minimap` with a View-menu toggle and
-> `editor.minimap` control command. The 200k-line cap is in place. The
-> `StyleSink` refactor and off-thread rendering (phase 3) have not landed
-> yet. Word wrap and folding are now on, so the geometry model uses display
-> lines (`visibleFromDocLine`/`docLineFromVisible`) from the start rather
-> than the identity the plan originally assumed.
+> on by default behind `editor.minimap` with a View-menu toggle (`Alt+M`) and
+> `editor.minimap` control command. Phase 2 added LRU strip eviction (16
+> strips), a 60 ms render debounce, dirty-range invalidation from the
+> modification position, and raised the line cap to 1M. The `StyleSink`
+> refactor and off-thread rendering (phase 3) have not landed yet. Word wrap
+> and folding are now on, so the geometry model uses display lines
+> (`visibleFromDocLine`/`docLineFromVisible`) from the start rather than the
+> identity the plan originally assumed.
 
 A VSCode-style minimap down the side of the editor: a block-rendered, syntax-colored
-overview of the whole buffer with a draggable viewport slider. Off by default behind
-`editor/minimap` until phase 3 lands.
+overview of the whole buffer with a draggable viewport slider. On by default;
+toggle with `Alt+M` or View > Minimap.
 
 ## Context: what Trowel's editor actually is
 
@@ -298,7 +300,7 @@ brackets):
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `editor/minimap` | bool | `false` in phases 1–2, `true` from phase 3 | |
+| `editor/minimap` | bool | `true` | |
 | `editor/minimapSide` | QString | `"right"` | `"right"` \| `"left"` |
 | `editor/minimapWidth` | int | `90` | clamped 40..200 px |
 
@@ -447,13 +449,14 @@ Ships behind an off-by-default flag, so the blast radius is zero.
 Dirty-range plumbing from `modified` and `linesAdded`, LRU strip eviction, 60 ms render
 debounce, decorations-over-cache separation so scrolling and hovering never re-render.
 This is what turns phase 1 from "works" into "feels free while typing". Raise the cap
-to 1M lines.
+to 1M lines. **Flip the default to on** and add the `Alt+M` shortcut — the debounce
+and eviction make the GUI-thread render safe enough for everyday use.
 
 ### Phase 3 — off-thread rendering
 The `StyleSink` refactor, then move `renderStrip` into a `QtConcurrent` worker seeded
 with `(strip text copy, sci_->lineState(firstLine - 1))`. Strips arrive asynchronously
 and repaint on completion; un-rendered strips draw as flat `minimapBg`. Removes the
-cap entirely and removes the forced `colourise`. **Flip the default to on.**
+cap entirely and removes the forced `colourise`.
 
 ### Phase 4 — polish
 Prefs UI for side and width; left-side layout; diagnostics / selection / caret-line

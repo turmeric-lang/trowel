@@ -2,6 +2,17 @@
 
 **Found:** 2026-10-05, against `main` (8a3546b). Pre-existing — reproduces on
 the clean tree with the minimap changes stashed.
+**Status:** reproduced 2026-10-05 against `main` (9616c3a). Fails in
+isolation with `FileNotFoundError` at `test_settings.py:74`
+(`json.loads(trowel_session.settings_json.read_text())`) — same crash and
+root cause as `test_live_reload_rainbow_off`; `settings.json` is absent
+after launch.
+**Fixed:** 2026-10-05. Same source fix as the companion report
+(`ensureFileExists()` in the `Settings` constructor). The test's fixed
+`time.sleep(1.0)` waits were also replaced with `_wait_rainbow_off`, which
+polls `editor.get_style_at` (re-lexing each poll) and requires the off
+state to hold across two checks straddling the 200ms debounce. Verified:
+`test_settings.py` 7/7 pass.
 **Impact:** the test cannot run. It crashes in setup with `FileNotFoundError`
 before asserting anything about broken-JSON resilience.
 

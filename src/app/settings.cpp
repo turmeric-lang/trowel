@@ -82,13 +82,12 @@ Settings::Settings()
     load();
     migrateFromQSettings();
 
-    // Watch the directory and the file (if they exist) so external edits
-    // trigger a reload. ensureFileExists() also adds these, but the file
-    // may already exist (e.g. written by the test harness or a previous run).
-    if (QDir(impl_->configDir).exists())
-        impl_->watcher->addPath(impl_->configDir);
-    if (QFile::exists(impl_->filePath))
-        impl_->watcher->addPath(impl_->filePath);
+    // Create settings.json if it does not exist yet — a fresh install with no
+    // QSettings values to migrate leaves no file behind, so the file the app
+    // treats as its source of truth would be absent until the user opened
+    // Settings. ensureFileExists() also watches the directory + file so
+    // external edits trigger a reload.
+    ensureFileExists();
 }
 
 Settings::~Settings() = default;

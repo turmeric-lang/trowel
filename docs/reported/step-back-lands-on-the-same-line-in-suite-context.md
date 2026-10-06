@@ -2,6 +2,20 @@
 
 **Found:** 2026-10-05, against `main` (8a3546b). Pre-existing — reproduces on
 the clean tree with the minimap changes stashed.
+**Status:** reproduced 2026-10-05 against `main` (9616c3a). Flaky, as
+described. Isolation: 1/1 pass. Suite context (full `test_debugger.py`):
+3 runs — pass / pass / **fail**. The failing run crashed with
+`IndexError: list index out of range` at `test_debugger.py:387`
+(`seen.append(trowel.call("debug.frames")["frames"][0]["line"])`) — the
+`frames` list was empty when read. Same race as the report (frames not
+refreshed after a step), manifesting on a forward step rather than the
+back step. A second, unrelated test (`test_restart_respawns_the_same_program`)
+also failed in 2 of the 3 suite runs; not in scope for this report.
+**Fixed:** 2026-10-05. `_step` (`tests/smoke/test_debugger.py`) now polls
+`debug.frames` until non-empty after `stop_count` increments, so a stop
+count increment guarantees fresh frames for every caller. Verified: 5/5
+isolation passes, 3/3 full `test_debugger.py` suite passes (step-back test
+green in all).
 **Impact:** the test is flaky. It passes in isolation (3/3 runs) and fails
 when run as part of the full `test_debugger.py` suite. A green suite run is
 not reliable evidence that replay step-back works.

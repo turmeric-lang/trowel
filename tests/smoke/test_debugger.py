@@ -109,14 +109,23 @@ def test_debug_refuses_a_non_turmeric_file(trowel, fixture_files: Path):
 
 # --- Phase 3: breakpoints and stepping -----------------------------------
 
-def _wait_state(trowel, target, timeout=8.0):
-    """Poll debug.status until `state` matches `target` or time out."""
+def _wait_state(trowel, target, timeout=8.0, min_stop_count=None):
+    """Poll debug.status until `state` matches `target` or time out.
+
+    When `min_stop_count` is set, also wait until `stop_count` reaches at least
+    that value. `state` flips to "paused" before `stop_count` increments — the
+    increment is deferred until the `stackTrace` round trip completes inside
+    `refreshFrames` — so a caller that reads `stop_count` or `frames` right
+    after `_wait_state` can see the previous stop's values. Waiting for
+    `stop_count` guarantees both are current.
+    """
     import time
     deadline = time.time() + timeout
     while time.time() < deadline:
         st = trowel.call("debug.status")
         if st.get("state") == target:
-            return st
+            if min_stop_count is None or st.get("stop_count", 0) >= min_stop_count:
+                return st
         time.sleep(0.05)
     return trowel.call("debug.status")
 
@@ -155,6 +164,12 @@ def _step(trowel, kind="in", timeout=5.0):
     so the state never changes and a poll returns instantly with the *previous*
     stop's frames. Neither does waiting on the line, since a step often stays
     on one. `stop_count` is the only thing that moves exactly once per stop.
+
+    `stop_count` incrementing confirms a stop arrived, but the `stackTrace`
+    response that populates frames is a separate DAP round trip that may not
+    have completed yet — so a `debug.frames` call immediately after can return
+    stale or empty frames. After `stop_count` moves, poll `debug.frames` until
+    it is non-empty so every caller sees fresh frames.
     """
     import time
     before = trowel.call("debug.status").get("stop_count", 0)
@@ -163,6 +178,14 @@ def _step(trowel, kind="in", timeout=5.0):
     while time.time() < deadline:
         st = trowel.call("debug.status")
         if st.get("stop_count", 0) > before:
+            # The stop landed. If the session ended there are no frames to wait
+            # for; otherwise wait for frames to be populated before returning.
+            if not st.get("running"):
+                return st
+            while time.time() < deadline:
+                if trowel.call("debug.frames").get("frames"):
+                    return st
+                time.sleep(0.02)
             return st
         # A step that runs off the end of the program ends the session rather
         # than stopping again; that is a legitimate outcome, not a timeout.
@@ -435,7 +458,7 @@ def test_reverse_steps_are_no_ops_in_a_live_session(trowel, fixture_files: Path)
     """
     _open(trowel, fixture_files / "trace_trivial.tur")
     trowel.call("debug.start", {"stop_on_entry": True, "timeout_ms": DEBUG_MS})
-    assert _wait_state(trowel, "paused")["state"] == "paused"
+    assert _wait_state(trowel, "paused", min_stop_count=1)["state"] == "paused"
     before = trowel.call("debug.frames")["frames"][0]["line"]
     stops = trowel.call("debug.status")["stop_count"]
 
@@ -603,7 +626,7 @@ def test_restart_respawns_the_same_program(trowel, fixture_files: Path):
         assert trowel.call("debug.status")["stop_count"] >= 2
 
         trowel.call("menu.invoke", {"path": ["Run", "Restart Debug Session"]})
-        st = _wait_state(trowel, "paused", timeout=10.0)
+        st = _wait_state(trowel, "paused", timeout=10.0, min_stop_count=1)
         assert st["state"] == "paused", st
         # Back at the first stop of a brand-new session: a respawn, not a
         # rewind. The recording-based rewind is what replay is for.
@@ -661,7 +684,7 @@ def test_a_top_level_file_stops_at_a_breakpoint(trowel, fixture_files: Path):
         _open(trowel, prog)
         trowel.call("debug.breakpoint.toggle", {"path": str(prog), "line": 2})
         trowel.call("debug.start", {"stop_on_entry": True, "timeout_ms": DEBUG_MS})
-        st = _wait_state(trowel, "paused", timeout=10.0)
+        st = _wait_state(trowel, "paused", timeout=10.0, min_stop_count=1)
         assert st["state"] == "paused", st
         assert st["stop_count"] >= 1, st
         trowel.call("debug.stop")
@@ -676,7 +699,7 @@ def test_a_file_with_main_does_stop(trowel, fixture_files: Path):
     try:
         _open(trowel, prog)
         trowel.call("debug.start", {"stop_on_entry": True, "timeout_ms": DEBUG_MS})
-        st = _wait_state(trowel, "paused", timeout=10.0)
+        st = _wait_state(trowel, "paused", timeout=10.0, min_stop_count=1)
         assert st["state"] == "paused", st
         assert st["stop_count"] >= 1, st
         trowel.call("debug.stop")

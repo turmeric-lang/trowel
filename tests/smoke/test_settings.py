@@ -14,6 +14,41 @@ def _settings_menu_path(trowel):
     return ["Edit", "Settings\u2026"]
 
 
+def _rainbow_styles(trowel):
+    """Re-lex by resetting the text, then return the four bracket styles."""
+    trowel.call("editor.set_text", {"text": "(a (b) c)"})
+    return [
+        trowel.call("editor.get_style_at", {"pos": p})["style"]
+        for p in [0, 3, 5, 8]
+    ]
+
+
+def _wait_rainbow_off(trowel, timeout=3.0):
+    """Poll until rainbow is off (all styles < 40), re-lexing each poll.
+
+    The settings reload is debounced 200ms and does not auto-re-lex existing
+    text, so each poll resets the text to force a re-lex with current settings.
+    Requires the off state to hold across two checks separated by more than the
+    debounce, so a not-yet-reloaded state cannot pass by accident — and a
+    broken-JSON reload that resets to defaults cannot pass either, because the
+    second check would see rainbow back on.
+    """
+    deadline = time.time() + timeout
+    confirmed = False
+    styles = _rainbow_styles(trowel)
+    while time.time() < deadline:
+        styles = _rainbow_styles(trowel)
+        if all(s < 40 for s in styles):
+            if confirmed:
+                return styles
+            confirmed = True
+            time.sleep(0.25)
+            continue
+        confirmed = False
+        time.sleep(0.05)
+    return styles
+
+
 def test_settings_opens_tab(trowel, trowel_session):
     """Settings… opens settings.json in a tab."""
     path = _settings_menu_path(trowel)
@@ -58,13 +93,8 @@ def test_live_reload_rainbow_off(trowel, trowel_session):
     existing["editor.rainbowBrackets"] = False
     trowel_session.settings_json.write_text(json.dumps(existing))
 
-    # Wait for the 200ms debounce + reload. Re-lex by setting text again.
-    time.sleep(1.0)
-    trowel.call("editor.set_text", {"text": "(a (b) c)"})
-    styles = [
-        trowel.call("editor.get_style_at", {"pos": p})["style"]
-        for p in [0, 3, 5, 8]
-    ]
+    # Poll until the 200ms-debounced reload applies (re-lexing each poll).
+    styles = _wait_rainbow_off(trowel)
     assert all(s < 40 for s in styles), f"rainbow still on after live reload: {styles}"
 
 
@@ -74,25 +104,18 @@ def test_broken_json_keeps_last_values(trowel, trowel_session):
     existing = json.loads(trowel_session.settings_json.read_text())
     existing["editor.rainbowBrackets"] = False
     trowel_session.settings_json.write_text(json.dumps(existing))
-    time.sleep(1.0)
 
-    trowel.call("editor.set_text", {"text": "(a (b) c)"})
-    styles_before = [
-        trowel.call("editor.get_style_at", {"pos": p})["style"]
-        for p in [0, 3, 5, 8]
-    ]
+    # Poll until the reload applies.
+    styles_before = _wait_rainbow_off(trowel)
     assert all(s < 40 for s in styles_before)
 
     # Overwrite with broken JSON.
     trowel_session.settings_json.write_text("{ this is not json")
-    time.sleep(1.0)
 
-    # Values should be unchanged.
-    trowel.call("editor.set_text", {"text": "(a (b) c)"})
-    styles_after = [
-        trowel.call("editor.get_style_at", {"pos": p})["style"]
-        for p in [0, 3, 5, 8]
-    ]
+    # Poll: the debounced reload must be attempted (and keep last values).
+    # _wait_rainbow_off requires the off state to hold across two checks
+    # straddling the 200ms debounce, so a reset-to-defaults would be caught.
+    styles_after = _wait_rainbow_off(trowel)
     assert all(s < 40 for s in styles_after), f"values changed on broken json: {styles_after}"
 
 
@@ -114,6 +137,12 @@ def test_unknown_key_ignored(trowel_session):
 def test_qsettings_values_not_read(trowel_session):
     """QSettings editor/rainbowBrackets=false is NOT read anymore.
     The app reads from settings.json, not QSettings."""
+    # Pre-write settings.json so the one-shot migrateFromQSettings() — which
+    # only runs when settings.json is absent — short-circuits and never reads
+    # QSettings. This tests the steady-state invariant the name promises:
+    # the read path ignores QSettings.
+    trowel_session.settings_json.write_text("{}")
+
     # Write the QSettings INI with the old key.
     ini = trowel_session.settings_ini
     ini.parent.mkdir(parents=True, exist_ok=True)

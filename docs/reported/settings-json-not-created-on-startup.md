@@ -2,6 +2,14 @@
 
 **Found:** 2026-10-05, against `main` (8a3546b). Pre-existing — reproduces on
 the clean tree with the minimap changes stashed.
+**Status:** reproduced 2026-10-05 against `main` (9616c3a). Fails in
+isolation with `FileNotFoundError` at `test_settings.py:57`
+(`json.loads(trowel_session.settings_json.read_text())`) —
+`settings.json` is absent after launch, exactly as described.
+**Fixed:** 2026-10-05. The `Settings` constructor (`src/app/settings.cpp`)
+now calls `ensureFileExists()` after `migrateFromQSettings()`, so
+`settings.json` is created (as `{}`) on startup when no migration values
+exist. Verified: `test_settings.py` 7/7 pass.
 **Impact:** the test cannot run. It crashes in setup with `FileNotFoundError`
 before asserting anything about live reload.
 

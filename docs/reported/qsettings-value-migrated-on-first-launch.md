@@ -2,6 +2,15 @@
 
 **Found:** 2026-10-05, against `main` (8a3546b). Pre-existing — reproduces on
 the clean tree with the minimap changes stashed.
+**Status:** reproduced 2026-10-05 against `main` (9616c3a). Fails in
+isolation with `AssertionError: QSettings value leaked: [23, 23, 23, 23]`
+at `test_settings.py:130` — all styles below 40, rainbow off. The QSettings
+`editor/rainbowBrackets=false` value reached the app through the one-shot
+`migrateFromQSettings()` path, exactly as described.
+**Fixed:** 2026-10-05. The test now pre-writes `settings.json` with `{}`
+before launch, so `migrateFromQSettings()` short-circuits on its
+`QFile::exists` check and never reads QSettings — testing the steady-state
+invariant the name promises. Verified: `test_settings.py` 7/7 pass.
 **Impact:** the test asserts that a QSettings `editor/rainbowBrackets=false`
 value is ignored, but rainbow is off after launch. The QSettings value
 reaches the app through the migration path.

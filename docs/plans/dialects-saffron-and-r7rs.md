@@ -130,7 +130,7 @@ extension for `r7rs/sweet`, so such a file needs its `#lang` line.
 | `tur repl --engine <name>` | `cc` / `jit` / `interp` |
 | `tur fmt --stdin --lang <base>` | dialect-aware formatting — Part F |
 | `tur --engine <name>` | engine selection, with `TUR_ENGINE` and `build.tur :engine` behind it |
-| `tur docs --open` / `--serve` | rendered guides + API offline — [`try-turmeric-improvements.md`](try-turmeric-improvements.md) |
+| `tur docs --open` / `--serve` | rendered guides + API offline — [`docs-pane.md`](docs-pane.md) |
 
 `--engine` existing unblocks `docs/plans/engine-selection.md`, which is
 explicitly sequenced behind it ("Do not start Part B or C of this plan until

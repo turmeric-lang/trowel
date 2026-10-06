@@ -1,11 +1,14 @@
 # Try Turmeric improvements — plan
 
-> **Status:** Not started. Split from Part H of
+> **Status:** Triage complete. The two items worth porting have been split
+> into their own plans:
+> [`docs-pane.md`](docs-pane.md) and [`examples-menu.md`](examples-menu.md).
+> Split from Part H of
 > [`dialects-saffron-and-r7rs.md`](dialects-saffron-and-r7rs.md), whose
-> Parts A–G and I are executed. This is the triage that followed that
-> survey; the two items worth porting (a docs pane and an Examples menu)
-> each deserve their own plan and are called out below.
-> **Related:** [`dialects-saffron-and-r7rs.md`](dialects-saffron-and-r7rs.md)
+> Parts A–G and I are executed.
+> **Related:** [`docs-pane.md`](docs-pane.md),
+> [`examples-menu.md`](examples-menu.md),
+> [`dialects-saffron-and-r7rs.md`](dialects-saffron-and-r7rs.md)
 > (the dialect survey this was surveyed from),
 > [`minimap.md`](minimap.md), [`sweet-exp.md`](sweet-exp.md).
 
@@ -14,24 +17,14 @@ archived `try-turmeric-*` plans. Most of the changes are web-platform fixes
 with no Trowel analogue (service worker, PWA install, iOS safe area, CSP,
 share links, project zip). What is left, triaged:
 
-## Worth porting
+## Worth porting — split into their own plans
 
-- **A docs pane.** Try Turmeric's is the best thing it has that Trowel lacks:
-  the full guides and API reference in-app, searchable, with the pane leading
-  on a quickstart and a "Recently Added" list. Trowel is better placed for it
-  than the browser was — `tur docs --open`/`--serve` exists, the release
-  publishes a `turmeric-docs-<tag>.tar.gz`, and the **docs pack** is a
-  specified artifact: `index.json` (version, nav tree, search strings) plus
-  chrome-free article bodies under `guides/`, `api/`, `spices/`. Both the
-  website and Try Turmeric render from that one pack, which is what keeps them
-  from drifting; a third consumer costs nothing new. Trowel's existing
-  "Show Doc" is hover-level and is not this. Deserves its own plan, including
-  whether to bundle the pack (another `FetchContent`, more bundle weight) or
-  fetch it on demand.
-- **An Examples menu.** Trowel has no discovery path for the language at all.
-  Upstream's examples now exist in both s-expression and sweet form across the
-  guides, and `tutorials/` ships in the repo. Cheap, and it is the other half
-  of the picker: the picker teaches the syntax exists, examples show it.
+- **A docs pane** — [`docs-pane.md`](docs-pane.md). The full guides and API
+  reference in-app, searchable, rendered from the same docs pack the website
+  and Try Turmeric use.
+- **An Examples menu** — [`examples-menu.md`](examples-menu.md). A discovery
+  path for the language: open a working example, run it, see output. The
+  other half of the dialect picker.
 
 ## Already in Trowel, in its own idiom — nothing to do
 

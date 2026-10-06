@@ -120,6 +120,16 @@ constexpr int kBreakpointStoppedMarker = 6;
 constexpr int kBreakpointDisabledStoppedMarker = 7;
 } // namespace dbg
 
+// Bookmark marker. Markers 0-7 are diagnostics + debugger, 25-31 are folding,
+// so 8 is the next free slot. Shares the same gutter margin as the others;
+// refreshGutterMarkers() gives it the lowest precedence (a bookmark on a line
+// with a breakpoint or execution marker is hidden, which is correct — the
+// bookmark is still in the map and navigable, just not painted behind a more
+// important marker).
+namespace bm {
+constexpr int kBookmarkMarker = 8;
+} // namespace bm
+
 class EditorView : public TabContent {
   Q_OBJECT
 public:
@@ -279,6 +289,11 @@ public:
   // selected-frame marker (visually distinct). Reveals the line.
   void setExecutionLine(int line, bool isTopFrame);
   void clearExecutionLine();
+
+  // --- Bookmarks ---
+  // Replace all bookmark markers in this buffer. `lines` are 1-based line
+  // numbers. Clears the previous set first, mirroring setBreakpointMarkers.
+  void setBookmarkMarkers(const QVector<int> &lines);
   // Size the line-number margin to the digits this buffer actually has.
   // Called whenever the line count can have changed; cheap, and a no-op when
   // the width is already right.
@@ -541,6 +556,9 @@ private:
   QVector<BreakpointMark> bpMarks_;
   int execLine_ = 0; // 1-based; 0 for "not stopped"
   bool execIsTopFrame_ = false;
+  // Bookmark lines (1-based) for this buffer. Source of truth for the
+  // bookmark gutter markers; set by the bookmarks plugin via natives.
+  QVector<int> bookmarkLines_;
   // Repaint every symbol marker in the shared gutter from bpMarks_,
   // execLine_, and diagnostics_. One marker per line, by precedence.
   void refreshGutterMarkers();

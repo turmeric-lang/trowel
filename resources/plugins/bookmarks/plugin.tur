@@ -1,0 +1,54 @@
+;; bookmarks/plugin.tur — bookmark toggle, navigation, and persistence.
+;;
+;; The first bundled plugin. The C++ side owns the bookmark state
+;; (QHash<QString, QSet<int>>) and persistence (~/.trowel/bookmarks.tur);
+;; this plugin owns the command and button registration. Each command
+;; is a thin call into the corresponding native.
+
+(trowel-register-command
+  "bookmarks.toggle"
+  "Toggle Bookmark"
+  "Bookmarks"
+  ""
+  (fn [] (trowel-bookmark-toggle)))
+
+(trowel-register-command
+  "bookmarks.next"
+  "Next Bookmark"
+  "Bookmarks"
+  ""
+  (fn [] (trowel-bookmark-next)))
+
+(trowel-register-command
+  "bookmarks.prev"
+  "Previous Bookmark"
+  "Bookmarks"
+  ""
+  (fn [] (trowel-bookmark-prev)))
+
+(trowel-register-command
+  "bookmarks.clear"
+  "Clear All Bookmarks"
+  "Bookmarks"
+  ""
+  (fn [] (trowel-bookmark-clear)))
+
+(trowel-register-button
+  "nf-md-bookmark"
+  "Toggle Bookmark"
+  "bookmarks.toggle")
+
+(trowel-register-button
+  "nf-md-bookmark_arrow_down"
+  "Next Bookmark"
+  "bookmarks.next")
+
+(trowel-register-button
+  "nf-md-bookmark_arrow_up"
+  "Previous Bookmark"
+  "bookmarks.prev")
+
+(trowel-register-button
+  "nf-md-bookmark_remove"
+  "Clear All Bookmarks"
+  "bookmarks.clear")

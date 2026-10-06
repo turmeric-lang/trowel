@@ -1,8 +1,9 @@
 # Saffron, R7RS, and the `#lang` dialect axis
 
 > **Status:** Parts A–G and I executed 2026-10-03, against Trowel `0943d95`.
-> Part H remains deferred by design (it is two separate plans). Per-part notes
-> are inline below; the work is in the tree, uncommitted.
+> Part H has been split into its own plan,
+> [`try-turmeric-improvements.md`](try-turmeric-improvements.md). Per-part
+> notes are inline below; the work is in the tree, uncommitted.
 >
 > **Pin now `v0.61.0`, and three of the four workarounds are gone.** All six
 > reports from Part I were filed as turmeric-lang/turmeric#1063 (merged) and
@@ -42,11 +43,12 @@ Run Buffer, Format File, the LSP — is wrong or absent for the other six.
 
 Separately, Try Turmeric gained a dialect picker, a docs pane, and a pile of
 fixes over the same period. The picker is the one worth porting outright; the
-rest is triaged in Part H.
+rest is triaged in [`try-turmeric-improvements.md`](try-turmeric-improvements.md).
 
 This plan is in nine parts, in dependency order. Parts A–D are the floor:
 without them a Saffron or Scheme file in Trowel is mis-highlighted, cannot be
-run, and is mangled by Format. Parts E–G are the features. Part H triages the
+run, and is mangled by Format. Parts E–G are the features. Part H (now
+[`try-turmeric-improvements.md`](try-turmeric-improvements.md)) triages the
 rest of the Try Turmeric work, and Part I is the upstream bugs this
 survey turned up (six, in the end), which should be reported whatever Trowel does about them.
 
@@ -128,7 +130,7 @@ extension for `r7rs/sweet`, so such a file needs its `#lang` line.
 | `tur repl --engine <name>` | `cc` / `jit` / `interp` |
 | `tur fmt --stdin --lang <base>` | dialect-aware formatting — Part F |
 | `tur --engine <name>` | engine selection, with `TUR_ENGINE` and `build.tur :engine` behind it |
-| `tur docs --open` / `--serve` | rendered guides + API offline — Part H |
+| `tur docs --open` / `--serve` | rendered guides + API offline — [`try-turmeric-improvements.md`](try-turmeric-improvements.md) |
 
 `--engine` existing unblocks `docs/plans/engine-selection.md`, which is
 explicitly sequenced behind it ("Do not start Part B or C of this plan until
@@ -794,59 +796,11 @@ name in the comment so the deletion is findable.
 
 ## Part H — the rest of the Try Turmeric improvements
 
-Surveyed from the changelog across v0.46.1–v0.60.1 and the archived
-`try-turmeric-*` plans. Most are web-platform fixes with no Trowel analogue
-(service worker, PWA install, iOS safe area, CSP, share links, project zip).
-What is left, triaged:
-
-**Worth porting, and the obvious next plan after this one:**
-
-- **A docs pane.** Try Turmeric's is the best thing it has that Trowel lacks:
-  the full guides and API reference in-app, searchable, with the pane leading
-  on a quickstart and a "Recently Added" list. Trowel is better placed for it
-  than the browser was — `tur docs --open`/`--serve` exists, the release
-  publishes a `turmeric-docs-<tag>.tar.gz`, and the **docs pack** is a
-  specified artifact: `index.json` (version, nav tree, search strings) plus
-  chrome-free article bodies under `guides/`, `api/`, `spices/`. Both the
-  website and Try Turmeric render from that one pack, which is what keeps them
-  from drifting; a third consumer costs nothing new. Trowel's existing
-  "Show Doc" is hover-level and is not this. Deserves its own plan, including
-  whether to bundle the pack (another `FetchContent`, more bundle weight) or
-  fetch it on demand.
-- **An Examples menu.** Trowel has no discovery path for the language at all.
-  Upstream's examples now exist in both s-expression and sweet form across the
-  guides, and `tutorials/` ships in the repo. Cheap, and it is the other half
-  of the picker: the picker teaches the syntax exists, examples show it.
-
-**Already in Trowel, in its own idiom — nothing to do:**
-
-- Outline, go-to-definition, hover, completion, rename, references
-  (the Run menu).
-- The time-travel tracer. Try's `trace-*` panel and Trowel's
-  `timeline_strip.cpp` + Replay are the two consumers of the same
-  `tur trace` format and the same DAP reverse execution; T1 and T2 landed
-  upstream and Trowel consumes both.
-- Minimap: `docs/plans/minimap.md` exists and `editor_view.h` references it;
-  check its actual state against the code before treating it as open work.
-- Sweet auto-indent: `editor_view.h` already has indentation handling "only
-  active for languages where indentation is load-bearing", so the sweet-exp
-  plan's Part C landed. Extend it to `r7rs/sweet`.
-
-**Fixes Trowel inherits for free by bumping (Part A):**
-
-- A later REPL turn can redefine any `def*` form (v0.49.1) — directly visible
-  in Trowel's REPL pane.
-- Output that stops mid-line reaches the consumer (v0.56.2); `#lang r7rs`
-  plus `(display "x")` used to print nothing until the next newline. Trowel
-  reads a pty rather than Emscripten's TTY, so it was probably never affected
-  — but it is worth one smoke test now that Scheme buffers are runnable, since
-  `display` without a trailing newline is idiomatic Scheme.
-- `tur lsp` / `tur dap` reject malformed or oversized `Content-Length`
-  (v0.58.0); a `-1` was a heap overflow. Trowel speaks both protocols.
-
-**Deliberately not porting:** share links, project zip import/export, the
-PWA/mobile work, the in-page tutorial overlay (`:tutorial` already works in the
-REPL pane, which is the native idiom), and the "Solve this" button.
+> **Split into its own plan:**
+> [`try-turmeric-improvements.md`](try-turmeric-improvements.md). The
+> triage — what is worth porting (a docs pane, an Examples menu), what is
+> already in Trowel, what the Part A bump inherited for free, and what is
+> deliberately not porting — lives there now.
 
 ---
 

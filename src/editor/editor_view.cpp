@@ -466,7 +466,8 @@ void EditorView::applyDefaultStyling() {
                            (1 << dbg::kCurrentLineMarker) |
                            (1 << dbg::kSelectedFrameMarker) |
                            (1 << dbg::kBreakpointStoppedMarker) |
-                           (1 << dbg::kBreakpointDisabledStoppedMarker));
+                           (1 << dbg::kBreakpointDisabledStoppedMarker) |
+                           (1 << bm::kBookmarkMarker));
   sci_->setMarginSensitiveN(margins::kGutter, true);
 
   // The remaining two margins: margin 2 is the fold margin (set up in
@@ -524,6 +525,12 @@ void EditorView::applyDefaultStyling() {
   // rather than two dots in two margins saying one each.
   sci_->markerDefine(dbg::kBreakpointStoppedMarker, SC_MARK_CIRCLE);
   sci_->markerDefine(dbg::kBreakpointDisabledStoppedMarker, SC_MARK_CIRCLE);
+  // Bookmark marker: a small rectangle (bookmark shape) in the gutter.
+  // Lowest precedence in refreshGutterMarkers — hidden behind breakpoints
+  // and the execution marker, but still in the bookmark map for navigation.
+  sci_->markerDefine(bm::kBookmarkMarker, SC_MARK_SMALLRECT);
+  sci_->markerSetFore(bm::kBookmarkMarker, 0x5050FF);   // blue
+  sci_->markerSetBack(bm::kBookmarkMarker, 0x5050FF);
   sci_->indicSetStyle(diag::kErrorIndicator, INDIC_SQUIGGLE);
   sci_->indicSetStyle(diag::kWarningIndicator, INDIC_SQUIGGLE);
   // Colors come from the theme; these are visible fallbacks for a theme that
@@ -1028,13 +1035,19 @@ void EditorView::refreshGutterMarkers() {
        {diag::kErrorMarker, diag::kWarningMarker, dbg::kBreakpointMarker,
         dbg::kBreakpointDisabledMarker, dbg::kCurrentLineMarker,
         dbg::kSelectedFrameMarker, dbg::kBreakpointStoppedMarker,
-        dbg::kBreakpointDisabledStoppedMarker}) {
+        dbg::kBreakpointDisabledStoppedMarker, bm::kBookmarkMarker}) {
     sci_->markerDeleteAll(m);
   }
 
   // Which lines the diagnostics claim, weakest precedence, computed first so
   // the stronger passes can simply overwrite the entry.
   QHash<int, int> markerForLine; // 0-based line -> marker number
+  // Bookmarks: lowest precedence. Painted first so anything else on the
+  // same line overwrites the entry.
+  for (int line : bookmarkLines_) {
+    if (line < 1) continue;
+    markerForLine[line - 1] = bm::kBookmarkMarker;
+  }
   for (const LspDiagnostic &d : diagnostics_) {
     const auto [start, end] = rangeForDiagnostic(d);
     if (end <= start)
@@ -1160,6 +1173,11 @@ void EditorView::clearExecutionLine() {
     return;
   execLine_ = 0;
   execIsTopFrame_ = false;
+  refreshGutterMarkers();
+}
+
+void EditorView::setBookmarkMarkers(const QVector<int> &lines) {
+  bookmarkLines_ = lines;
   refreshGutterMarkers();
 }
 

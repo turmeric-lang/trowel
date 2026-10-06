@@ -6,4 +6,7 @@
     <qresource prefix="/fonts">
         <file alias="SymbolsNerdFont-Regular.ttf">fonts/SymbolsNerdFont-Regular.ttf</file>
     </qresource>
+    <qresource prefix="/plugins">
+        <file alias="bookmarks/plugin.tur">plugins/bookmarks/plugin.tur</file>
+    </qresource>
 </RCC>

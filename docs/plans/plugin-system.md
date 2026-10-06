@@ -1,11 +1,28 @@
 # Plugin system and Turmeric integration — plan
 
-> **Status:** Planning.
+> **Status:** P0–P7 shipped. All seven milestones landed across commits
+> `dacdb2e` ("WIP: Plugins") and `8a3546b` ("Plugins"). `libturi.a` is linked
+> into `trowel_lib` (P0); `CommandRegistry` + `CommandPalette` with `Ctrl+P`
+> are wired (P1); the full v1 native API — 21 natives covering registration,
+> state reading, buffer manipulation, UI, snippets, keybinding, and background
+> tasks — is registered in `src/plugin/plugin_natives.cpp` (P2); the OSC 517
+> REPL command bridge is live (P3); the snippets plugin with tab-stop parsing
+> ships as a smoke-tested `plugin.tur` (P4); data-driven syntax plugins via
+> `trowel-define-syntax` are built and smoke-tested (P5); `keymap.tur` loading
+> is wired (P6); `trowel-spawn` + the 16 ms `QTimer` event-loop pump are live
+> (P7). Four smoke tests cover it: `test_snippets.py`, `test_syntax_plugin.py`,
+> `test_keymap.py`, `test_background.py`.
+>
+> **Still open:** per-plugin isolation (§4.4) is split into its own plan,
+> [`plugin-isolation.md`](plugin-isolation.md). Bundled plugins are loaded
+> from `:/plugins/` (Qt resources); the bookmarks plugin is the first.
 > **Related:** [`PLAN.md`](PLAN.md) (architecture), [`socket-api.md`](socket-api.md)
 > (control socket — the existing command dispatch this builds on),
 > [`button-bar.md`](button-bar.md) (side bar — the existing button surface this
 > extends), [`multi-window.md`](multi-window.md) (WindowManager),
-> [`editor-intelligence.md`](editor-intelligence.md) (LSP / buffer model).
+> [`editor-intelligence.md`](editor-intelligence.md) (LSP / buffer model),
+> [`plugin-isolation.md`](plugin-isolation.md) (per-plugin sandboxing — split
+> from §4.4).
 
 Two goals, one plan, because they are inseparable: the plugin system's
 scripting language is Turmeric, and embedding Turmeric is what makes the
@@ -357,15 +374,13 @@ scheduler, which is cooperative and single-threaded within the `TuriEnv`.
 
 ### 4.4 Per-plugin isolation (future)
 
+Split into its own plan: [`plugin-isolation.md`](plugin-isolation.md).
+
 v1 uses a single shared `TuriEnv` for all plugins. This is simple and lets
 plugins share definitions (one plugin's `defmodule` is visible to another's
 `(import ...)`). The trade-off: a plugin that calls `turi_env_reset` would
-wipe every other plugin's state.
-
-Future: one `TuriEnv` per plugin, each sandboxed with `turi_env_new_sandboxed`
-plus `turi_env_allow` grants for the capabilities the plugin's manifest
-declares. A shared "API env" holds the Trowel natives; each plugin env imports
-from it. This is the model `turi_env_set_shared_spice_image` was designed for.
+wipe every other plugin's state. The isolation plan covers the per-plugin
+env management, capability grants, and manifest format.
 
 ### 4.5 Background code
 
@@ -461,16 +476,27 @@ expansion logic is Turmeric code, and the C++ side only provides the
 low-level buffer primitives. A user who wants to add a snippet edits a
 `.tur` file, not C++.
 
-### 5.3 Bookmarks (stretch)
+### 5.3 Bookmarks
 
-If snippets prove the system, a bookmarks plugin is the natural second:
+Implemented as a bundled Turmeric plugin at
+`resources/plugins/bookmarks/plugin.tur`, loaded from the `:/plugins/` Qt
+resource path (bundled plugins are now scanned alongside `~/.trowel/plugins/`).
+Registers "Toggle Bookmark", "Next Bookmark", "Prev Bookmark", and "Clear All
+Bookmarks" commands plus four side-bar buttons.
 
-- `trowel:register-command` for "Toggle Bookmark", "Next Bookmark", "Prev
-  Bookmark", "List Bookmarks".
-- Bookmarks stored in a Turmeric `Map<String, Vector<(file, line)>>`.
-- Persisted to `~/.trowel/bookmarks.tur` via `trowel:eval` + `turi_eval_file`
-  (or a `trowel:read-file` / `trowel:write-file` native pair).
-- "List Bookmarks" opens the command palette filtered to bookmark entries.
+The C++ side owns the bookmark state (`QHash<QString, QSet<int>>` in
+`PluginContext`) and persistence (`~/.trowel/bookmarks.tur`, one
+`file:line` per line). Four bookmark natives — `trowel-bookmark-toggle`,
+`trowel-bookmark-next`, `trowel-bookmark-prev`, `trowel-bookmark-clear` —
+handle the state, marker, and persistence in one call. The Turmeric plugin
+is a thin wrapper that registers commands and buttons and calls the
+natives. Visual markers use `kBookmarkMarker` (Scintilla marker 8) in the
+shared gutter, with lowest precedence in `refreshGutterMarkers()`. Also
+added general-purpose natives `trowel-cursor-line`, `trowel-goto-line`,
+`trowel-set-bookmarks` (comma-separated line string), `trowel-read-file`,
+and `trowel-write-file` (restricted to `~/.trowel/`). Covered by
+`tests/smoke/test_bookmarks.py` (4 tests: toggle, next/prev, clear,
+persistence across restart).
 
 ---
 

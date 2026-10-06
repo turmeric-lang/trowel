@@ -2,6 +2,8 @@
 
 #include "turi_api.h"
 
+#include <QHash>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
@@ -24,6 +26,10 @@ struct PluginContext {
     HookBus* hookBus = nullptr;
     // The active snippet session (one at a time, on the active editor).
     SnippetSession* snippet = nullptr;
+    // Bookmark state: file path → set of 1-based lines. Managed by the
+    // bookmark natives (trowel-bookmark-toggle/next/prev/clear) and
+    // persisted to ~/.trowel/bookmarks.tur.
+    QHash<QString, QSet<int>>* bookmarks = nullptr;
 };
 
 // Register all v1 native functions into the plugin env.  Called by

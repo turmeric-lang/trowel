@@ -12,9 +12,11 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QMessageBox>
+#include <QSet>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTimer>
@@ -156,6 +158,24 @@ void PluginHost::loadAll()
     pluginCtx->registry = registry_;
     pluginCtx->hookBus = hookBus_;
     pluginCtx->snippet = snippet_;
+    pluginCtx->bookmarks = new QHash<QString, QSet<int>>;
+    // Load persisted bookmarks from ~/.trowel/bookmarks.tur.
+    {
+        QFile f(QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
+                + "/.trowel/bookmarks.tur");
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            while (!f.atEnd()) {
+                const QByteArray line = f.readLine().trimmed();
+                if (line.isEmpty()) continue;
+                const int colon = line.lastIndexOf(':');
+                if (colon <= 0) continue;
+                const QString path = QString::fromUtf8(line.left(colon));
+                const int lineNum = line.mid(colon + 1).toInt();
+                if (lineNum > 0) (*pluginCtx->bookmarks)[path].insert(lineNum);
+            }
+            f.close();
+        }
+    }
     registerPluginNatives(env_, pluginCtx);
 
     // Set the module base dir to ~/.trowel/plugins/ so (import ...) resolves
@@ -167,11 +187,11 @@ void PluginHost::loadAll()
 
     // Scan plugin directories.
     QStringList searchDirs;
-    // 1. Bundled plugins (read-only).
-    //    macOS: Trowel.app/Contents/Resources/plugins/
-    //    Linux: <dir-of-binary>/plugins/
-    // For now, only user plugins are scanned (bundled plugins are a future
-    // packaging step).
+    // 1. Bundled plugins (read-only, shipped in the Qt resource system).
+    //    Loaded from :/plugins/ so they work in both dev and bundled builds
+    //    without CMake staging. User plugins can override bundled ones by
+    //    registering commands with the same id (the registry replaces by id).
+    searchDirs << ":/plugins";
     // 2. User plugins.
     searchDirs << pluginsDir;
 

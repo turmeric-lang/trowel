@@ -14,10 +14,15 @@
 #include <ScintillaEdit.h>
 
 #include <QAction>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QKeyEvent>
+#include <QStandardPaths>
 #include <QStatusBar>
 
 #include <cstdlib>
+#include <algorithm>
 
 namespace trowel {
 
@@ -154,7 +159,57 @@ static TuriValue native_cursor_pos(TuriEnv* /*env*/, TuriValue* /*args*/,
     return turi_int(e->cursorPos());
 }
 
-// (trowel:selection) → (start end) as two int args
+// (trowel-cursor-line) → int (1-based line number)
+static TuriValue native_cursor_line(TuriEnv* /*env*/, TuriValue* /*args*/,
+                                       uint32_t /*n*/, void* ud)
+{
+    auto* e = activeEditor(ctx(ud));
+    if (!e) return turi_int(0);
+    auto [line, col] = e->lineColFromPos(e->cursorPos());
+    return turi_int(static_cast<int64_t>(line + 1)); // 0-based → 1-based
+}
+
+// (trowel-goto-line :line int) — reveal and move cursor to a 1-based line.
+static TuriValue native_goto_line(TuriEnv* /*env*/, TuriValue* args,
+                                     uint32_t n, void* ud)
+{
+    auto* e = activeEditor(ctx(ud));
+    if (!e) return turi_nil();
+    if (n < 1) return turi_error("goto-line needs 1 arg");
+    const int line = static_cast<int>(asInt(args[0]));
+    if (line < 1) return turi_error("goto-line: line must be >= 1");
+    // posFromLineCol takes 0-based line, col 0 = start of line.
+    const int pos = e->posFromLineCol(line - 1, 0);
+    e->setCursorPos(pos);
+    // Ensure the line is visible without forcing it to the top.
+    if (auto* sci = e->sciWidget()) sci->gotoLine(line - 1);
+    return turi_nil();
+}
+
+// (trowel-set-bookmarks :lines "1,5,10") — replace all bookmark markers on
+// the active editor with the given 1-based line numbers (comma-separated).
+// An empty string clears all bookmarks.
+static TuriValue native_set_bookmarks(TuriEnv* /*env*/, TuriValue* args,
+                                        uint32_t n, void* ud)
+{
+    auto* e = activeEditor(ctx(ud));
+    if (!e) return turi_nil();
+    if (n < 1) return turi_error("set-bookmarks needs 1 arg");
+    const char* lineStr = asCStr(args[0]);
+    if (!lineStr) return turi_error("set-bookmarks: lines is not a string");
+
+    QVector<int> lines;
+    const QString s = QString::fromUtf8(lineStr);
+    if (!s.isEmpty()) {
+        const auto parts = s.split(',', Qt::SkipEmptyParts);
+        for (const auto& p : parts)
+            lines.append(p.trimmed().toInt());
+    }
+    e->setBookmarkMarkers(lines);
+    return turi_nil();
+}
+
+// (trowel-selection) → (start end) as two int args
 static TuriValue native_selection(TuriEnv* /*env*/, TuriValue* /*args*/,
                                     uint32_t /*n*/, void* ud)
 {
@@ -290,6 +345,227 @@ static TuriValue native_reload_plugin(TuriEnv* /*env*/, TuriValue* args,
     return turi_bool(ok);
 }
 
+// ---- File I/O natives -------------------------------------------------------
+
+// (trowel-read-file :path "..." → cstr | nil)
+// Reads a file under ~/.trowel/ and returns its contents as a string.
+// Returns nil if the file does not exist; returns an error for paths
+// outside ~/.trowel/ or on read failure.
+static TuriValue native_read_file(TuriEnv* env, TuriValue* args,
+                                     uint32_t n, void* /*ud*/)
+{
+    if (n < 1) return turi_error("read-file needs 1 arg");
+    const char* pathStr = asCStr(args[0]);
+    if (!pathStr) return turi_error("read-file: path is not a string");
+
+    const QString path = QString::fromUtf8(pathStr);
+    const QString trowelDir =
+        QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
+        + "/.trowel";
+    const QString canonical = QFileInfo(path).canonicalFilePath();
+    const QString resolved = canonical.isEmpty() ? path : canonical;
+    const QString trowelCanonical = QFileInfo(trowelDir).canonicalFilePath();
+    if (!resolved.startsWith(trowelCanonical))
+        return turi_error("read-file: path must be under ~/.trowel/");
+
+    QFile f(path);
+    if (!f.exists()) return turi_nil();
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return turi_error("read-file: cannot open file");
+    const QByteArray content = f.readAll();
+    f.close();
+    char* copy = turi_val_strdup(env, content.constData());
+    return turi_cstr(copy);
+}
+
+// (trowel-write-file :path "..." :content "...") → void
+// Writes content to a file under ~/.trowel/.
+static TuriValue native_write_file(TuriEnv* /*env*/, TuriValue* args,
+                                      uint32_t n, void* /*ud*/)
+{
+    if (n < 2) return turi_error("write-file needs 2 args");
+    const char* pathStr = asCStr(args[0]);
+    const char* contentStr = asCStr(args[1]);
+    if (!pathStr) return turi_error("write-file: path is not a string");
+
+    const QString path = QString::fromUtf8(pathStr);
+    const QString trowelDir =
+        QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
+        + "/.trowel";
+    const QString trowelCanonical = QFileInfo(trowelDir).canonicalFilePath();
+    // For a file that doesn't exist yet, canonicalFilePath is empty; resolve
+    // the parent and append the filename.
+    QString resolved = QFileInfo(path).canonicalFilePath();
+    if (resolved.isEmpty()) {
+        const QString parent = QFileInfo(path).dir().canonicalPath();
+        if (!parent.isEmpty())
+            resolved = parent + "/" + QFileInfo(path).fileName();
+        else
+            resolved = path;
+    }
+    if (!resolved.startsWith(trowelCanonical))
+        return turi_error("write-file: path must be under ~/.trowel/");
+
+    // Ensure the parent directory exists.
+    QDir().mkpath(QFileInfo(path).dir().absolutePath());
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+        return turi_error("write-file: cannot open file");
+    const QByteArray content(contentStr ? contentStr : "");
+    f.write(content);
+    f.close();
+    return turi_nil();
+}
+
+// ---- Bookmark natives -------------------------------------------------------
+
+// Persistence: ~/.trowel/bookmarks.tur — one "file:line" per line.
+static QString bookmarksPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
+           + "/.trowel/bookmarks.tur";
+}
+
+static void saveBookmarks(const QHash<QString, QSet<int>>& bms) {
+    QFile f(bookmarksPath());
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+    for (auto it = bms.constBegin(); it != bms.constEnd(); ++it) {
+        for (int line : it.value()) {
+            f.write(it.key().toUtf8());
+            f.write(":");
+            f.write(QByteArray::number(line));
+            f.write("\n");
+        }
+    }
+    f.close();
+}
+
+// Update the bookmark markers on the active editor for its file.
+static void refreshBookmarkMarkers(EditorView* e,
+                                     const QHash<QString, QSet<int>>& bms) {
+    if (!e) return;
+    const QString path = e->filePath();
+    if (path.isEmpty()) return;
+    auto it = bms.constFind(path);
+    if (it == bms.constEnd()) {
+        e->setBookmarkMarkers({});
+        return;
+    }
+    QVector<int> lines = it.value().values();
+    std::sort(lines.begin(), lines.end());
+    e->setBookmarkMarkers(lines);
+}
+
+// (trowel-bookmark-toggle) — toggle a bookmark on the current line.
+static TuriValue native_bookmark_toggle(TuriEnv* /*env*/, TuriValue* /*args*/,
+                                           uint32_t /*n*/, void* ud)
+{
+    auto* c = ctx(ud);
+    if (!c || !c->bookmarks) return turi_error("no bookmark state");
+    auto* e = activeEditor(c);
+    if (!e) return turi_error("no active editor");
+    const QString path = e->filePath();
+    if (path.isEmpty()) return turi_error("no file path");
+
+    auto [line0, col] = e->lineColFromPos(e->cursorPos());
+    const int line = line0 + 1; // 0-based → 1-based
+
+    QSet<int>& fileBms = (*c->bookmarks)[path];
+    if (fileBms.contains(line))
+        fileBms.remove(line);
+    else
+        fileBms.insert(line);
+    if (fileBms.isEmpty())
+        c->bookmarks->remove(path);
+
+    saveBookmarks(*c->bookmarks);
+    refreshBookmarkMarkers(e, *c->bookmarks);
+    return turi_nil();
+}
+
+// (trowel-bookmark-next) — go to the next bookmark after the current line.
+static TuriValue native_bookmark_next(TuriEnv* /*env*/, TuriValue* /*args*/,
+                                         uint32_t /*n*/, void* ud)
+{
+    auto* c = ctx(ud);
+    if (!c || !c->bookmarks) return turi_error("no bookmark state");
+    auto* e = activeEditor(c);
+    if (!e) return turi_error("no active editor");
+    const QString path = e->filePath();
+    if (path.isEmpty()) return turi_error("no file path");
+
+    auto it = c->bookmarks->constFind(path);
+    if (it == c->bookmarks->constEnd() || it.value().isEmpty())
+        return turi_error("no bookmarks in this file");
+
+    auto [line0, col] = e->lineColFromPos(e->cursorPos());
+    const int curLine = line0 + 1;
+
+    QVector<int> lines = it.value().values();
+    std::sort(lines.begin(), lines.end());
+    for (int ln : lines) {
+        if (ln > curLine) {
+            e->setCursorPos(e->posFromLineCol(ln - 1, 0));
+            if (auto* sci = e->sciWidget()) sci->gotoLine(ln - 1);
+            return turi_nil();
+        }
+    }
+    // Wrap around to the first bookmark.
+    e->setCursorPos(e->posFromLineCol(lines.first() - 1, 0));
+    if (auto* sci = e->sciWidget()) sci->gotoLine(lines.first() - 1);
+    return turi_nil();
+}
+
+// (trowel-bookmark-prev) — go to the previous bookmark before the current line.
+static TuriValue native_bookmark_prev(TuriEnv* /*env*/, TuriValue* /*args*/,
+                                         uint32_t /*n*/, void* ud)
+{
+    auto* c = ctx(ud);
+    if (!c || !c->bookmarks) return turi_error("no bookmark state");
+    auto* e = activeEditor(c);
+    if (!e) return turi_error("no active editor");
+    const QString path = e->filePath();
+    if (path.isEmpty()) return turi_error("no file path");
+
+    auto it = c->bookmarks->constFind(path);
+    if (it == c->bookmarks->constEnd() || it.value().isEmpty())
+        return turi_error("no bookmarks in this file");
+
+    auto [line0, col] = e->lineColFromPos(e->cursorPos());
+    const int curLine = line0 + 1;
+
+    QVector<int> lines = it.value().values();
+    std::sort(lines.begin(), lines.end());
+    for (int i = lines.size() - 1; i >= 0; --i) {
+        if (lines[i] < curLine) {
+            e->setCursorPos(e->posFromLineCol(lines[i] - 1, 0));
+            if (auto* sci = e->sciWidget()) sci->gotoLine(lines[i] - 1);
+            return turi_nil();
+        }
+    }
+    // Wrap around to the last bookmark.
+    e->setCursorPos(e->posFromLineCol(lines.last() - 1, 0));
+    if (auto* sci = e->sciWidget()) sci->gotoLine(lines.last() - 1);
+    return turi_nil();
+}
+
+// (trowel-bookmark-clear) — clear all bookmarks in the current file.
+static TuriValue native_bookmark_clear(TuriEnv* /*env*/, TuriValue* /*args*/,
+                                          uint32_t /*n*/, void* ud)
+{
+    auto* c = ctx(ud);
+    if (!c || !c->bookmarks) return turi_error("no bookmark state");
+    auto* e = activeEditor(c);
+    if (!e) return turi_error("no active editor");
+    const QString path = e->filePath();
+    if (path.isEmpty()) return turi_error("no file path");
+
+    c->bookmarks->remove(path);
+    saveBookmarks(*c->bookmarks);
+    refreshBookmarkMarkers(e, *c->bookmarks);
+    return turi_nil();
+}
+
 // ---- Snippet natives --------------------------------------------------------
 
 // (trowel-insert-snippet :template "...")
@@ -409,6 +685,9 @@ void registerPluginNatives(TuriEnv* env, PluginContext* ctxPtr)
         {"trowel-register-hook",     native_register_hook,     TUR_NRT_VOID},
         {"trowel-buffer-text",       native_buffer_text,       TUR_NRT_CSTR},
         {"trowel-cursor-pos",        native_cursor_pos,        TUR_NRT_INT},
+        {"trowel-cursor-line",       native_cursor_line,       TUR_NRT_INT},
+        {"trowel-goto-line",         native_goto_line,         TUR_NRT_VOID},
+        {"trowel-set-bookmarks",     native_set_bookmarks,     TUR_NRT_VOID},
         {"trowel-selection",         native_selection,         TUR_NRT_INT},
         {"trowel-file-path",         native_file_path,         TUR_NRT_CSTR},
         {"trowel-word-at-cursor",    native_word_at_cursor,    TUR_NRT_CSTR},
@@ -420,6 +699,12 @@ void registerPluginNatives(TuriEnv* env, PluginContext* ctxPtr)
         {"trowel-focus-editor",      native_focus_editor,      TUR_NRT_VOID},
         {"trowel-focus-repl",        native_focus_repl,        TUR_NRT_VOID},
         {"trowel-reload-plugin",     native_reload_plugin,     TUR_NRT_BOOL},
+        {"trowel-read-file",         native_read_file,         TUR_NRT_CSTR},
+        {"trowel-write-file",        native_write_file,        TUR_NRT_VOID},
+        {"trowel-bookmark-toggle",    native_bookmark_toggle,   TUR_NRT_VOID},
+        {"trowel-bookmark-next",      native_bookmark_next,     TUR_NRT_VOID},
+        {"trowel-bookmark-prev",      native_bookmark_prev,     TUR_NRT_VOID},
+        {"trowel-bookmark-clear",     native_bookmark_clear,    TUR_NRT_VOID},
         {"trowel-insert-snippet",    native_insert_snippet,    TUR_NRT_VOID},
         {"trowel-snippet-active?",   native_snippet_active,    TUR_NRT_BOOL},
         {"trowel-snippet-advance",   native_snippet_advance,   TUR_NRT_VOID},

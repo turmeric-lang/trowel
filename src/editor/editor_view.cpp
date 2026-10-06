@@ -166,8 +166,9 @@ EditorView::EditorView(QWidget *parent)
 
   // The editor and its minimap sit side by side. The minimap is hidden
   // by default and only shown when the preference is on. A custom
-  // vertical scrollbar lives to the right of the minimap; when the
-  // minimap is off, Scintilla's native scrollbar is used instead.
+  // vertical scrollbar always lives to the right of the minimap (or
+  // directly to the right of the editor when the minimap is off) and
+  // replaces Scintilla's native scrollbar in both cases.
   auto *editorRow = new QHBoxLayout();
   editorRow->setContentsMargins(0, 0, 0, 0);
   editorRow->setSpacing(0);
@@ -648,16 +649,14 @@ int EditorView::minimapWidthDefault() {
 void EditorView::applyMinimapSettings() {
   if (minimap_)
     minimap_->applySettings(minimapEnabledDefault(), minimapWidthDefault());
-  // When the minimap is on, hide Scintilla's native scrollbar and show
-  // the external one to the right of the minimap. When off, restore the
-  // native scrollbar.
-  const bool mmOn = minimapEnabledDefault();
+  // The external scrollbar is always used in place of Scintilla's native
+  // one. It lives to the right of the minimap when the minimap is on, and
+  // directly to the right of the editor when it is off.
   if (sci_)
-    sci_->setVScrollBar(!mmOn);
+    sci_->setVScrollBar(false);
   if (editorScrollBar_) {
-    editorScrollBar_->setVisible(mmOn);
-    if (mmOn)
-      syncEditorScrollBar();
+    editorScrollBar_->setVisible(true);
+    syncEditorScrollBar();
   }
 }
 

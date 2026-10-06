@@ -1,5 +1,7 @@
 #include "command_registry.h"
 
+#include <QAction>
+
 namespace trowel {
 
 CommandRegistry::CommandRegistry(QObject* parent)
@@ -49,9 +51,18 @@ bool CommandRegistry::run(const QString& id) const
 
 bool CommandRegistry::setShortcut(const QString& id, const QKeySequence& shortcut)
 {
+    return setShortcuts(id, {shortcut});
+}
+
+bool CommandRegistry::setShortcuts(const QString& id,
+                                   const QList<QKeySequence>& shortcuts)
+{
     auto it = index_.find(id);
     if (it == index_.end()) return false;
-    commands_[it.value()].shortcut = shortcut;
+    auto& cmd = commands_[it.value()];
+    cmd.shortcut = shortcuts.isEmpty() ? QKeySequence() : shortcuts.first();
+    if (cmd.action)
+        cmd.action->setShortcuts(shortcuts);
     return true;
 }
 

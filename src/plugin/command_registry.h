@@ -8,6 +8,8 @@
 
 #include <functional>
 
+class QAction;
+
 namespace trowel {
 
 // One command the palette can show and run.  Built-in commands lift their
@@ -19,6 +21,7 @@ struct CommandEntry {
     QString category;    // "Run", "Snippets"
     QKeySequence shortcut;  // optional
     std::function<void()> handler;  // what runs when selected
+    QAction* action = nullptr;  // built-in commands: the backing QAction
 };
 
 // Holds every command the palette can show.  Built-in commands register at
@@ -46,7 +49,12 @@ public:
 
     // Set the keyboard shortcut for a command by id.  Returns false if the
     // command is not found.  Used by the keymap.tur override mechanism (P6).
+    // Also updates the backing QAction if one exists.
     bool setShortcut(const QString& id, const QKeySequence& shortcut);
+
+    // Set multiple keyboard shortcuts for a command by id.  Replaces all
+    // existing shortcuts.  Returns false if the command is not found.
+    bool setShortcuts(const QString& id, const QList<QKeySequence>& shortcuts);
 
     // All registered commands, in insertion order.  The palette iterates
     // these to build its list.

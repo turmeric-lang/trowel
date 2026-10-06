@@ -1,0 +1,29 @@
+;; snippets/plugin.tur — expand common Turmeric forms at the cursor.
+;;
+;; The second bundled plugin. Type a keyword (defn, defmodule, etc.) and
+;; run "Expand Snippet" (command palette or the side-bar button). The
+;; template is inserted with tab-stops; Tab cycles through them.
+
+(defn snippets-expand-at-cursor []
+  (let [word (trowel-word-at-cursor)]
+    (match word
+      "defn"     (trowel-insert-snippet "(defn ${1:name} [${2:args}]\n  ${0:body})")
+      "defmodule" (trowel-insert-snippet "(defmodule ${1:Name}\n  ${0:body})")
+      "defdata"   (trowel-insert-snippet "(defdata ${1:Name}\n  ${0:body})")
+      "let"      (trowel-insert-snippet "(let [${1:var} ${2:val}]\n  ${0:body})")
+      "match"    (trowel-insert-snippet "(match ${1:expr}\n  ${2:pat} ${3:body}\n  ${0:else})")
+      "def"      (trowel-insert-snippet "(def ${1:name} ${0:val})")
+      "fn"       (trowel-insert-snippet "(fn [${1:args}]\n  ${0:body})")
+      _          (trowel-status-message (str "No snippet for: " word)))))
+
+(trowel-register-command
+  "snippets.expand"
+  "Expand Snippet"
+  "Snippets"
+  ""
+  (fn [] (snippets-expand-at-cursor)))
+
+(trowel-register-button
+  "nf-md-playlist_play"
+  "Expand Snippet"
+  "snippets.expand")

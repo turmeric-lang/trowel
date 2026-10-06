@@ -145,20 +145,19 @@ TuriValue PluginHost::callClosure(TuriValue closure, const QVector<TuriValue>& a
                      static_cast<uint32_t>(argCopy.size()));
 }
 
-void PluginHost::loadAll()
+void PluginHost::setupNatives()
 {
-    if (!env_) return;
+    if (!env_ || pluginCtx_) return;  // already set up
 
-    // Register natives before loading plugins so plugin.tur can call them.
     // The context is heap-allocated and owned by the host (lives as long as
     // the env, which is freed in ~PluginHost).
-    auto* pluginCtx = new PluginContext;
-    pluginCtx->host = this;
-    pluginCtx->window = mainWindow_;
-    pluginCtx->registry = registry_;
-    pluginCtx->hookBus = hookBus_;
-    pluginCtx->snippet = snippet_;
-    pluginCtx->bookmarks = new QHash<QString, QSet<int>>;
+    pluginCtx_ = new PluginContext;
+    pluginCtx_->host = this;
+    pluginCtx_->window = mainWindow_;
+    pluginCtx_->registry = registry_;
+    pluginCtx_->hookBus = hookBus_;
+    pluginCtx_->snippet = snippet_;
+    pluginCtx_->bookmarks = new QHash<QString, QSet<int>>;
     // Load persisted bookmarks from ~/.trowel/bookmarks.tur.
     {
         QFile f(QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
@@ -171,12 +170,21 @@ void PluginHost::loadAll()
                 if (colon <= 0) continue;
                 const QString path = QString::fromUtf8(line.left(colon));
                 const int lineNum = line.mid(colon + 1).toInt();
-                if (lineNum > 0) (*pluginCtx->bookmarks)[path].insert(lineNum);
+                if (lineNum > 0) (*pluginCtx_->bookmarks)[path].insert(lineNum);
             }
             f.close();
         }
     }
-    registerPluginNatives(env_, pluginCtx);
+    registerPluginNatives(env_, pluginCtx_);
+}
+
+void PluginHost::loadAll()
+{
+    if (!env_) return;
+
+    // Natives must be registered before loading plugins so plugin.tur can
+    // call them.  Also needed before loadKeymap() for trowel-set-keybinding.
+    setupNatives();
 
     // Set the module base dir to ~/.trowel/plugins/ so (import ...) resolves
     // plugin-to-plugin.
@@ -299,7 +307,30 @@ void PluginHost::loadKeymap()
 {
     if (!env_) return;
 
-    // Load ~/.trowel/keymap.tur if it exists.
+    // Load the bundled keymap from Qt resources first.  This sets the
+    // default shortcuts as data-driven keymap.tur, so users can see and
+    // override them.  The bundled file is platform-specific.
+#ifdef Q_OS_MACOS
+    const QString bundledPath = QStringLiteral(":/keymap/keymap-mac.tur");
+#else
+    const QString bundledPath = QStringLiteral(":/keymap/keymap-other.tur");
+#endif
+    QFile bf(bundledPath);
+    if (bf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        const QByteArray bsource = bf.readAll();
+        bf.close();
+        TuriValue bresult = turi_eval_with_path(
+            env_, bsource.constData(), bundledPath.toUtf8().constData());
+        if (turi_is_error(bresult)) {
+            const char* msg = turi_error_message(bresult);
+            qWarning("[PluginHost] bundled keymap failed: %s",
+                     msg ? msg : "(unknown)");
+        } else {
+            qDebug("[PluginHost] loaded bundled keymap");
+        }
+    }
+
+    // Load ~/.trowel/keymap.tur if it exists (user overrides).
     const QString keymapPath =
         QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
         + "/.trowel/keymap.tur";
@@ -325,7 +356,7 @@ void PluginHost::loadKeymap()
         return;
     }
 
-    qDebug("[PluginHost] loaded keymap");
+    qDebug("[PluginHost] loaded user keymap");
 }
 
 void PluginHost::startEventLoopPump()

@@ -807,14 +807,9 @@ void MainWindow::setupMenus() {
             &MainWindow::evalTurmeric);
     debugMenu->addAction(evalTurmericAction);
 
-    // P1: register built-in commands into the command registry now that all
-    // QActions exist, and install the Cmd-P shortcut for the palette.
-    registerBuiltinCommands();
+    // P1: install the Cmd-P shortcut for the palette.  Built-in commands are
+    // registered in startSession() after the command registry exists.
     new QShortcut(QKeySequence("Ctrl+P"), this, [this] { openCommandPalette(); });
-
-    // P6: load the user keymap after built-in commands are registered so
-    // trowel-set-keybinding can override their shortcuts.
-    if (pluginHost_) pluginHost_->loadKeymap();
 }
 
 namespace {
@@ -1809,6 +1804,7 @@ void MainWindow::registerBuiltinCommands() {
                         cmd.shortcut = a->shortcut();
                     auto* actionPtr = a;
                     cmd.handler = [actionPtr] { actionPtr->trigger(); };
+                    cmd.action = actionPtr;
                     commandRegistry_->add(cmd);
                 }
             }
@@ -3459,9 +3455,16 @@ void MainWindow::startSession() {
     // P2: load plugins after the session is fully set up (REPL, buffers,
     // registry, hook bus all ready).  Plugins register commands and hooks
     // that reference these.
+    // P1: register built-in commands now that commandRegistry_ exists, so
+    // the palette can show them and the keymap can override their shortcuts.
+    // P6: load the keymap (bundled defaults + user overrides) after built-in
+    // commands are registered so trowel-set-keybinding can find them by id.
     // P5: load syntax plugins before regular plugins so syntax descriptors
     // are available when editors are opened.
     if (pluginHost_) {
+        registerBuiltinCommands();
+        pluginHost_->setupNatives();
+        pluginHost_->loadKeymap();
         pluginHost_->loadSyntaxPlugins();
         pluginHost_->loadAll();
         pluginHost_->startEventLoopPump();

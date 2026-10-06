@@ -628,21 +628,27 @@ static TuriValue native_snippet_advance(TuriEnv* /*env*/, TuriValue* /*args*/,
     return turi_nil();
 }
 
-// (trowel-set-keybinding :command "..." :key "...")
-// Override the keyboard shortcut for a registered command.
+// (trowel-set-keybinding "command-id" "key" ["key2" ...])
+// Override the keyboard shortcut(s) for a registered command.  Additional
+// key string arguments set secondary shortcuts (e.g. Ctrl+Tab and Ctrl+PgDown).
 static TuriValue native_set_keybinding(TuriEnv* /*env*/, TuriValue* args,
                                           uint32_t n, void* ud)
 {
     auto* c = ctx(ud);
     if (!c || !c->registry) return turi_error("no command registry");
-    if (n < 2) return turi_error("set-keybinding needs 2 args");
+    if (n < 2) return turi_error("set-keybinding needs at least 2 args");
     const char* cmdId = asCStr(args[0]);
-    const char* keyStr = asCStr(args[1]);
     if (!cmdId) return turi_error("set-keybinding: command id is not a string");
-    if (!keyStr || !*keyStr) return turi_error("set-keybinding: key is empty");
-    QKeySequence ks(QString::fromUtf8(keyStr));
-    if (ks.isEmpty()) return turi_error("set-keybinding: invalid key sequence");
-    if (!c->registry->setShortcut(QString::fromUtf8(cmdId), ks))
+
+    QList<QKeySequence> shortcuts;
+    for (uint32_t i = 1; i < n; ++i) {
+        const char* keyStr = asCStr(args[i]);
+        if (!keyStr || !*keyStr) return turi_error("set-keybinding: key is empty");
+        QKeySequence ks(QString::fromUtf8(keyStr));
+        if (ks.isEmpty()) return turi_error("set-keybinding: invalid key sequence");
+        shortcuts.append(ks);
+    }
+    if (!c->registry->setShortcuts(QString::fromUtf8(cmdId), shortcuts))
         return turi_error("set-keybinding: command not found");
     return turi_nil();
 }

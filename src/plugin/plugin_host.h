@@ -16,6 +16,7 @@ class HookBus;
 class SnippetSession;
 class EditorView;
 class SyntaxRegistry;
+struct PluginContext;
 
 // PluginHost owns the in-process Turmeric evaluation environment (TuriEnv)
 // and, in later phases, the registered native API, hook bus, and plugin
@@ -60,6 +61,11 @@ public:
     // Called at startup after natives are registered.
     void loadAll();
 
+    // Create the PluginContext and register all native functions.  Must be
+    // called before loadKeymap() and loadAll() so the keymap can use
+    // trowel-set-keybinding.  Idempotent: safe to call once.
+    void setupNatives();
+
     // Reload a single plugin by name (clears and re-evals its plugin.tur).
     bool reloadPlugin(const QString& name);
 
@@ -102,6 +108,7 @@ private:
     SyntaxRegistry* syntaxRegistry_ = nullptr;
     QTimer* eventLoopTimer_ = nullptr;
     QStringList loadedPlugins_;
+    PluginContext* pluginCtx_ = nullptr;  // owned by the host
 };
 
 }  // namespace trowel

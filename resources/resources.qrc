@@ -8,5 +8,10 @@
     </qresource>
     <qresource prefix="/plugins">
         <file alias="bookmarks/plugin.tur">plugins/bookmarks/plugin.tur</file>
+        <file alias="snippets/plugin.tur">plugins/snippets/plugin.tur</file>
+    </qresource>
+    <qresource prefix="/keymap">
+        <file alias="keymap-mac.tur">keymap-mac.tur</file>
+        <file alias="keymap-other.tur">keymap-other.tur</file>
     </qresource>
 </RCC>

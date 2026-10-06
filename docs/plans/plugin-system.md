@@ -10,12 +10,23 @@
 > ships as a smoke-tested `plugin.tur` (P4); data-driven syntax plugins via
 > `trowel-define-syntax` are built and smoke-tested (P5); `keymap.tur` loading
 > is wired (P6); `trowel-spawn` + the 16 ms `QTimer` event-loop pump are live
-> (P7). Four smoke tests cover it: `test_snippets.py`, `test_syntax_plugin.py`,
-> `test_keymap.py`, `test_background.py`.
+> (P7). Five smoke tests cover it: `test_snippets.py`, `test_syntax_plugin.py`,
+> `test_keymap.py`, `test_background.py`, `test_bookmarks.py`.
+>
+> **Bundled plugins:** bookmarks and snippets ship as `:/plugins/` Qt
+> resources. The keymap is data-driven: bundled `:/keymap/keymap-mac.tur`
+> and `:/keymap/keymap-other.tur` set default shortcuts (generated from
+> `shortcuts.cpp`), and `~/.trowel/keymap.tur` overrides them. The
+> `trowel-set-keybinding` native now updates the backing `QAction` directly,
+> so overrides take effect immediately. `CommandRegistry::setShortcut()`
+> was fixed to propagate to the `QAction` (previously only the registry
+> entry was updated). Startup order fixed: `registerBuiltinCommands()` and
+> `loadKeymap()` now run in `startSession()` after `commandRegistry_` and
+> `pluginHost_` exist (previously called from `setupMenus()` where both
+> were null, making them no-ops).
 >
 > **Still open:** per-plugin isolation (§4.4) is split into its own plan,
-> [`plugin-isolation.md`](plugin-isolation.md). Bundled plugins are loaded
-> from `:/plugins/` (Qt resources); the bookmarks plugin is the first.
+> [`plugin-isolation.md`](plugin-isolation.md).
 > **Related:** [`PLAN.md`](PLAN.md) (architecture), [`socket-api.md`](socket-api.md)
 > (control socket — the existing command dispatch this builds on),
 > [`button-bar.md`](button-bar.md) (side bar — the existing button surface this
@@ -523,7 +534,7 @@ does not benefit from being in a scripting language.
 | Feature | Current C++ location | Migration path |
 |---|---|---|
 | Command definitions | `MainWindow::setupMenus()` (hardcoded `QAction`s) | Lift into `CommandRegistry`; a bundled `commands.tur` plugin registers them. The `QAction`s become thin wrappers that call `CommandRegistry::run(id)`. |
-| Keymap | Hardcoded `QKeySequence` in `QAction` setup | A `keymap.tur` data file mapping command ids to keys. The host reads it and sets `QAction::setShortcut`. User-customizable without recompiling. |
+| Keymap | Hardcoded `QKeySequence` in `QAction` setup | **Done.** Bundled `keymap-mac.tur` / `keymap-other.tur` (Qt resources) set defaults; `~/.trowel/keymap.tur` overrides. `trowel-set-keybinding` updates the `QAction` directly. |
 | Snippet definitions | (none yet) | Pure Turmeric from day one (§5). |
 | Bookmark storage | (none yet) | Pure Turmeric from day one (§5.3). |
 | Recent files logic | `MainWindow::loadRecentFiles` / `rememberRecentFile` | A `recent-files.tur` plugin that hooks `file:opened` and `file:saved`, stores the list, and registers "Open Recent" commands. |
@@ -682,9 +693,13 @@ src/plugin/
 
 ### P6 — First migration: commands + keymap to Turmeric (1–2 days)
 
-- A bundled `commands.tur` that registers every built-in command.
-- `keymap.tur` data file for shortcuts.
-- `MainWindow::setupMenus` reads from the registry instead of hardcoding.
+- ~~A bundled `commands.tur` that registers every built-in command.~~
+  Built-in commands stay in C++ (`registerBuiltinCommands()` walks the menu
+  bar and registers each `QAction`); the keymap overrides their shortcuts.
+- **Done.** Bundled `keymap-mac.tur` / `keymap-other.tur` (Qt resources)
+  set default shortcuts; `~/.trowel/keymap.tur` overrides. The
+  `trowel-set-keybinding` native updates the backing `QAction` directly.
+  `CommandRegistry::setShortcut()` propagates to the `QAction`.
 
 ### P7 — Background tasks (1–2 days)
 

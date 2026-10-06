@@ -9,6 +9,7 @@
 #include "debug/breakpoint_model.h"
 #include "debug/debug_session.h"
 #include "editor/editor_view.h"
+#include "editor/minimap_view.h"
 #include "lsp/lsp_manager.h"
 #include "repl/repl_session.h"
 #include "repl/pty_session.h"
@@ -515,6 +516,22 @@ void HandleEditorState(MainWindow* w, const QJsonObject&, const Reply& reply) {
         const int firstVisible = static_cast<int>(sci->firstVisibleLine());
         o["topLine"] = static_cast<int>(sci->docLineFromVisible(firstVisible));
         o["xOffset"] = static_cast<int>(sci->xOffset());
+    }
+    reply(o, nullptr);
+}
+
+void HandleEditorMinimap(MainWindow* w, const QJsonObject&, const Reply& reply) {
+    EditorView* e = RequireEditor(w, reply);
+    if (!e) return;
+    QJsonObject o;
+    if (auto* mm = e->minimapView()) {
+        const auto st = mm->state();
+        o["enabled"] = st.enabled;
+        o["sliderTop"] = st.sliderTop;
+        o["sliderHeight"] = st.sliderHeight;
+        o["topLine"] = st.topLine;
+    } else {
+        o["enabled"] = false;
     }
     reply(o, nullptr);
 }
@@ -1981,6 +1998,7 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "editor.set_selection") { HandleEditorSetSelection(w, args, reply); return; }
     if (cmd == "editor.get_style_at")  { HandleEditorGetStyleAt(w, args, reply); return; }
     if (cmd == "editor.state")         { HandleEditorState(w, args, reply); return; }
+    if (cmd == "editor.minimap")       { HandleEditorMinimap(w, args, reply); return; }
     if (cmd == "editor.folds")         { HandleEditorFolds(w, args, reply); return; }
     if (cmd == "editor.fold")          { HandleEditorFold(w, args, reply); return; }
     if (cmd == "editor.is_read_only")  { HandleEditorIsReadOnly(w, args, reply); return; }

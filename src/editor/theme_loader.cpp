@@ -278,6 +278,21 @@ Theme LoadBuiltinDarkTheme() {
     for (auto it = styles.begin(); it != styles.end(); ++it) {
         t.styles.insert(it.key(), parseStyle(it.value()));
     }
+
+    // Minimap colours. The slider states fall back to selectionBg at
+    // increasing alpha so a theme that omits the minimap block still gets a
+    // visible, distinct slider.
+    const QJsonObject minimap = root.value("minimap").toObject();
+    t.minimapBg = parseColor(minimap.value("background"), t.editorBg);
+    auto sliderFallback = [&](const char* key, int alpha) {
+        QColor c = parseColor(minimap.value(key), t.selectionBg);
+        c.setAlpha(alpha);
+        return c;
+    };
+    t.minimapSliderBg       = sliderFallback("sliderBackground",       64);
+    t.minimapSliderHoverBg  = sliderFallback("sliderHoverBackground", 102);
+    t.minimapSliderActiveBg = sliderFallback("sliderActiveBackground", 140);
+
     return t;
 }
 
@@ -429,6 +444,21 @@ void ApplyThemeToTerminal(TerminalView* terminal, const Theme& theme) {
     std::array<QColor, 16> ansi;
     for (int i = 0; i < 16; ++i) ansi[i] = theme.ansi[i];
     terminal->setTerminalPalette(theme.terminalFg, theme.terminalBg, ansi);
+}
+
+QHash<int, QColor> StyleForegroundTable(const Theme& theme) {
+    QHash<int, QColor> table;
+    // Every style key the theme knows about, resolved to its foreground.
+    for (auto it = theme.styles.begin(); it != theme.styles.end(); ++it) {
+        const auto styleIt = StyleKeyMap().find(it.key());
+        if (styleIt == StyleKeyMap().end()) continue;
+        if (it.value().fg.isValid())
+            table.insert(styleIt.value(), it.value().fg);
+    }
+    // STYLE_DEFAULT carries the base foreground so unstyled bytes (and
+    // whitespace, which Scintilla leaves at the default) get a colour too.
+    table.insert(STYLE_DEFAULT, theme.editorFg);
+    return table;
 }
 
 }

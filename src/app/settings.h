@@ -55,6 +55,10 @@ public:
     // Remember per-document state (phase 6).
     bool rememberDocumentState() const;
 
+    // Minimap (phase 1). Off by default until phase 3 flips it.
+    bool minimapEnabled() const;
+    void setMinimapEnabled(bool enabled);
+
 signals:
     // Emitted after a reload with only the keys whose effective value changed.
     void changed(const QStringList& keys);

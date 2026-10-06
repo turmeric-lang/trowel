@@ -18,6 +18,12 @@
         "error": "#D9735A",
         "warning": "#EFA030"
     },
+    "minimap": {
+        "background": "#0C0A08",
+        "sliderBackground": "#D48B1C40",
+        "sliderHoverBackground": "#D48B1C66",
+        "sliderActiveBackground": "#D48B1C8C"
+    },
     "debugger": {
         "breakpoint": "#D48B1C",
         "breakpointDisabled": "#7A6A55",

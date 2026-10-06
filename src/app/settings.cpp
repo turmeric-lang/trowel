@@ -267,4 +267,24 @@ bool Settings::rememberDocumentState() const {
     return v.isBool() ? v.toBool() : true;
 }
 
+bool Settings::minimapEnabled() const {
+    const QJsonValue v = impl_->values.value("editor.minimap");
+    return v.isBool() ? v.toBool() : false;
+}
+
+void Settings::setMinimapEnabled(bool enabled) {
+    // Update in-memory values immediately so callers that read right after
+    // (the View menu toggle calls applyMinimapSettings synchronously) see
+    // the new value without waiting for the file watcher's 200ms debounce.
+    impl_->values["editor.minimap"] = enabled;
+    // Write through to settings.json so the file watcher fires and every
+    // window's onSettingsChanged applies the change uniformly.
+    QDir().mkpath(impl_->configDir);
+    QSaveFile f(impl_->filePath);
+    if (f.open(QIODevice::WriteOnly)) {
+        f.write(QJsonDocument(impl_->values).toJson(QJsonDocument::Indented));
+        f.commit();
+    }
+}
+
 }  // namespace trowel

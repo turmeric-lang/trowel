@@ -1,8 +1,13 @@
 # Minimap — plan
 
-> **Status:** Not started. No `minimap_view.{h,cpp}` in the source tree.
-> The plan's prerequisite — the `StyleSink` refactor and
-> `StyleForegroundTable` — has not landed either.
+> **Status:** Phase 1 shipped. `MinimapView` (`src/editor/minimap_view.{h,cpp}`)
+> is in the tree, block-rendered via `SCI_GETSTYLEDTEXT` on the GUI thread,
+> off by default behind `editor.minimap` with a View-menu toggle and
+> `editor.minimap` control command. The 200k-line cap is in place. The
+> `StyleSink` refactor and off-thread rendering (phase 3) have not landed
+> yet. Word wrap and folding are now on, so the geometry model uses display
+> lines (`visibleFromDocLine`/`docLineFromVisible`) from the start rather
+> than the identity the plan originally assumed.
 
 A VSCode-style minimap down the side of the editor: a block-rendered, syntax-colored
 overview of the whole buffer with a draggable viewport slider. Off by default behind

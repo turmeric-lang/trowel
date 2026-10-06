@@ -519,6 +519,19 @@ void MainWindow::setupMenus() {
     });
     viewMenu->addAction(wordWrapAction_);
 
+    // Minimap (Phase 1). A global toggle wired to the editor.minimap setting.
+    minimapAction_ = MakeAction("Minimap", Command::Minimap, this);
+    minimapAction_->setCheckable(true);
+    minimapAction_->setChecked(EditorView::minimapEnabledDefault());
+    connect(minimapAction_, &QAction::triggered, this, [this] {
+        const bool enabled = minimapAction_->isChecked();
+        Settings::instance().setMinimapEnabled(enabled);
+        // The file watcher fires onSettingsChanged, but apply immediately too
+        // so the toggle feels instant rather than waiting for the watcher.
+        applyMinimapSettings();
+    });
+    viewMenu->addAction(minimapAction_);
+
     // Folding submenu (Phase 5).
     auto* foldingMenu = viewMenu->addMenu("Folding");
     {
@@ -3194,6 +3207,16 @@ void MainWindow::applyBracketPairGuides(bool enabled) {
     }
 }
 
+void MainWindow::applyMinimapSettings() {
+    const bool enabled = EditorView::minimapEnabledDefault();
+    if (minimapAction_) minimapAction_->setChecked(enabled);
+    for (auto& b : buffers_) {
+        if (b->view && b->view->kind() == TabContent::Kind::Editor) {
+            static_cast<EditorView*>(b->view)->applyMinimapSettings();
+        }
+    }
+}
+
 void MainWindow::onSettingsChanged(const QStringList& keys) {
     for (const QString& key : keys) {
         if (key == "editor.rainbowBrackets") {
@@ -3229,6 +3252,8 @@ void MainWindow::onSettingsChanged(const QStringList& keys) {
             }
             if (wordWrapAction_ && editorView())
                 wordWrapAction_->setChecked(editorView()->isWordWrap());
+        } else if (key == "editor.minimap") {
+            applyMinimapSettings();
         }
     }
 }

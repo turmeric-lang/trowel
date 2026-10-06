@@ -20,6 +20,7 @@ class QLineEdit;
 class QTimer;
 
 namespace trowel {
+class MinimapView;
 
 // The vertical half of the bracket-pair guide, drawn as a transparent overlay
 // over Scintilla's viewport.
@@ -227,6 +228,12 @@ public:
 
     // Default rainbow-bracket preference, read from QSettings.
     static bool rainbowBracketsDefault();
+
+    // --- Minimap (Phase 1) ---
+    static bool minimapEnabledDefault();
+    static int minimapWidthDefault();
+    void applyMinimapSettings();
+    MinimapView* minimapView() const { return minimap_; }
 
     // Monotonic edit counter, bumped on every text insertion/deletion. Used as
     // the LSP document version; unlike isModified() it never resets on save.
@@ -479,6 +486,7 @@ private:
     void clearFindHighlights();
 
     ScintillaEdit* sci_;
+    MinimapView* minimap_ = nullptr;
     QString path_;
     QFont currentFont_;
     bool rainbow_ = true;

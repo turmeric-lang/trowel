@@ -55,6 +55,8 @@ add_library(trowel_lib STATIC
     src/editor/find_engine.h
     src/editor/lexers.h
     src/editor/lexer_adapter.cpp
+    src/editor/minimap_view.cpp
+    src/editor/minimap_view.h
     src/editor/scanner.h
     src/editor/scanner_c.cpp
     src/editor/scanner_cmake.cpp

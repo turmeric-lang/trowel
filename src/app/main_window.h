@@ -233,6 +233,7 @@ private slots:
     void openSettings();
     void applyRainbowBrackets(bool enabled);
     void applyBracketPairGuides(bool enabled);
+    void applyMinimapSettings();
     void onSettingsChanged(const QStringList& keys);
     void rebuildWindowMenu();
     void goToLine();
@@ -449,6 +450,7 @@ private:
     QAction* zoomOutAction_ = nullptr;
     QAction* actualSizeAction_ = nullptr;
     QAction* wordWrapAction_ = nullptr;
+    QAction* minimapAction_ = nullptr;
     QAction* fullScreenAction_ = nullptr;
     // Go menu actions (Phase 1).
     QAction* goToLineAction_ = nullptr;

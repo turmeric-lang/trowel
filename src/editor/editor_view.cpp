@@ -4,6 +4,7 @@
 #include "editor/find_bar.h"
 #include "editor/find_engine.h"
 #include "editor/lexers.h"
+#include "editor/minimap_view.h"
 #include "editor/theme_loader.h"
 #include "lsp/lsp_manager.h"
 
@@ -14,6 +15,7 @@
 #include <QFont>
 #include <QFontInfo>
 #include <QHash>
+#include <QHBoxLayout>
 #include <QSet>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -161,7 +163,16 @@ EditorView::EditorView(QWidget* parent)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 4, 0, 0);
-    layout->addWidget(sci_);
+
+    // The editor and its minimap sit side by side. The minimap is hidden
+    // by default and only shown when the preference is on.
+    auto* editorRow = new QHBoxLayout();
+    editorRow->setContentsMargins(0, 0, 0, 0);
+    editorRow->setSpacing(0);
+    editorRow->addWidget(sci_, 1);
+    minimap_ = new MinimapView(sci_, this);
+    editorRow->addWidget(minimap_);
+    layout->addLayout(editorRow, 1);
 
     findBar_ = new FindBar(this);
     findBar_->hide();
@@ -174,7 +185,10 @@ EditorView::EditorView(QWidget* parent)
     installLexer();
     applyWrap();
     applyFoldMargin();
-    ApplyThemeToEditor(sci_, LoadBuiltinDarkTheme());
+    const Theme theme = LoadBuiltinDarkTheme();
+    ApplyThemeToEditor(sci_, theme);
+    minimap_->setTheme(theme);
+    applyMinimapSettings();
 
     connect(sci_, &ScintillaEditBase::savePointChanged, this, [this](bool dirty) {
         emit modifiedChanged(dirty);
@@ -204,6 +218,12 @@ EditorView::EditorView(QWidget* parent)
         // An edit can cross a power of ten and change how many digits the
         // widest line number needs.
         updateLineNumberWidth();
+        // The minimap's strip cache is keyed on document lines; an edit
+        // dirties everything from the edit point to EOF because lexer state
+        // cascades forward.
+        if (minimap_ && minimap_->isVisible())
+            minimap_->invalidateLines(static_cast<int>(sci_->lineFromPosition(
+                static_cast<sptr_t>(sci_->currentPos()))), -1);
         emit contentChanged(docVersion_);
     });
 
@@ -498,7 +518,14 @@ void EditorView::applyDefaultStyling() {
     // resizing and wrapping in one hook — cheaper and more reliable than
     // chasing each of those separately.
     connect(sci_, &ScintillaEditBase::painted, this,
-            [this] { repositionBracketGuideOverlay(); });
+            [this] {
+                repositionBracketGuideOverlay();
+                // The minimap slider follows the editor's scroll. The painted
+                // signal covers vertical scroll, resize, and wrap re-layout in
+                // one hook — the same reason the bracket guide uses it.
+                if (minimap_ && minimap_->isVisible())
+                    minimap_->syncToEditorScroll();
+            });
 
     // Hover: how long the mouse must rest before dwellStart fires.
     sci_->setMouseDwellTime(500);
@@ -559,6 +586,23 @@ void EditorView::installLexer() {
     // Re-lex the whole document so existing text picks up the new styling
     // immediately.
     sci_->colourise(0, -1);
+    // A language or rainbow change restyles everything, so the minimap's
+    // entire strip cache is stale.
+    if (minimap_) minimap_->invalidateAll();
+}
+
+bool EditorView::minimapEnabledDefault() {
+    return Settings::instance().minimapEnabled();
+}
+
+int EditorView::minimapWidthDefault() {
+    // Width is not yet a separate setting (phase 4); use the plan default.
+    return 90;
+}
+
+void EditorView::applyMinimapSettings() {
+    if (minimap_)
+        minimap_->applySettings(minimapEnabledDefault(), minimapWidthDefault());
 }
 
 void EditorView::autoIndentAfterNewline() {

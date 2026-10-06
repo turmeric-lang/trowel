@@ -57,6 +57,7 @@ QList<QKeySequence> mac(Command cmd) {
     case Command::ShowRepl:           return {QKeySequence("Ctrl+Alt+R")};
     case Command::ToggleSplit:        return {};
     case Command::WordWrap:           return {QKeySequence("Alt+Z")};
+    case Command::Minimap:            return {};
     case Command::ZoomIn:             return {QKeySequence("Ctrl+=")};
     case Command::ZoomOut:            return {QKeySequence("Ctrl+-")};
     case Command::ActualSize:         return {QKeySequence("Ctrl+0")};
@@ -166,6 +167,7 @@ QList<QKeySequence> other(Command cmd) {
     case Command::ShowRepl:           return {QKeySequence("Ctrl+Alt+R")};
     case Command::ToggleSplit:        return {};
     case Command::WordWrap:           return {QKeySequence("Alt+Z")};
+    case Command::Minimap:            return {};
     case Command::ZoomIn:             return {QKeySequence("Ctrl+=")};
     case Command::ZoomOut:            return {QKeySequence("Ctrl+-")};
     case Command::ActualSize:         return {QKeySequence("Ctrl+0")};
@@ -276,6 +278,7 @@ const char* CommandName(Command cmd) {
     case Command::ShowRepl:           return "ShowRepl";
     case Command::ToggleSplit:        return "ToggleSplit";
     case Command::WordWrap:           return "WordWrap";
+    case Command::Minimap:            return "Minimap";
     case Command::ZoomIn:             return "ZoomIn";
     case Command::ZoomOut:            return "ZoomOut";
     case Command::ActualSize:         return "ActualSize";

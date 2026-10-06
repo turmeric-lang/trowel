@@ -52,6 +52,14 @@ struct Theme {
     // Standard 16-color ANSI palette: 0-7 normal, 8-15 bright.
     QColor ansi[16];
 
+    // Minimap (phase 1). Each falls back when absent so a theme file
+    // written before the minimap existed keeps working — see
+    // LoadBuiltinDarkTheme for the fallbacks.
+    QColor minimapBg;
+    QColor minimapSliderBg;
+    QColor minimapSliderHoverBg;
+    QColor minimapSliderActiveBg;
+
     QHash<QString, StyleSpec> styles;
 };
 
@@ -72,5 +80,11 @@ Theme LoadBuiltinDarkTheme();
 void ApplyThemeToEditor(ScintillaEdit* sci, const Theme& theme);
 
 void ApplyThemeToTerminal(TerminalView* terminal, const Theme& theme);
+
+// Style id -> foreground QColor, for consumers that paint text themselves
+// (the minimap) rather than handing colors to Scintilla. Built over the
+// existing StyleKeyMap; the table is a copy, so mutating it does not affect
+// the theme.
+QHash<int, QColor> StyleForegroundTable(const Theme& theme);
 
 }

@@ -51,6 +51,7 @@ enum class Command {
     ShowRepl,
     ToggleSplit,
     WordWrap,        // Phase 4
+    Minimap,        // Phase 1 — toggle the minimap
     ZoomIn,
     ZoomOut,
     ActualSize,

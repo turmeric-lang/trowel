@@ -35,13 +35,28 @@ void SetPluginSyntaxDescriptorIndex(int index) {
 }
 
 // ---------------------------------------------------------------------------
+// Style sinks
+// ---------------------------------------------------------------------------
+
+// Paints into Scintilla's live document. Used by the editor's own lexer.
+class DocumentSink final : public StyleSink {
+public:
+    explicit DocumentSink(IDocument* doc) : doc_(doc) {}
+    void Paint(Sci_Position pos, Sci_Position len, int style) override {
+        doc_->StartStyling(pos);
+        doc_->SetStyleFor(len, static_cast<char>(style));
+    }
+private:
+    IDocument* doc_;
+};
+
+// ---------------------------------------------------------------------------
 // Emitter
 // ---------------------------------------------------------------------------
 
 void Emitter::Paint(Sci_Position from, Sci_Position len, int style) {
     if (len <= 0) return;
-    doc_->StartStyling(base_ + from);
-    doc_->SetStyleFor(len, static_cast<char>(style));
+    sink_->Paint(base_ + from, len, style);
 }
 
 void Emitter::Emit(Sci_Position from, Sci_Position len, int style) {
@@ -246,6 +261,14 @@ int DefaultStyleFor(Language lang) {
     case Language::Turmeric: break;
     }
     return static_cast<int>(TurStyle::Default);
+}
+
+const SyntaxDescriptor* CurrentPluginSyntaxDescriptor() {
+    if (g_syntaxRegistry && g_pluginSyntaxDescIndex >= 0 &&
+        g_pluginSyntaxDescIndex < g_syntaxRegistry->descriptors().size()) {
+        return &g_syntaxRegistry->descriptors()[g_pluginSyntaxDescIndex];
+    }
+    return nullptr;
 }
 
 namespace {
@@ -723,7 +746,8 @@ void ScannerLexer::Lex(Sci_PositionU startPos, Sci_Position lengthDoc,
     LexState st = (startLine > 0) ? UnpackLexState(doc->GetLineState(startLine - 1))
                                   : LexState{};
 
-    Emitter out(doc, lineStartPos);
+    DocumentSink sink(doc);
+    Emitter out(sink, lineStartPos);
     out.SetGapStyle(DefaultStyleFor(lang_));
 
     Sci_Position i = 0;

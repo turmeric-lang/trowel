@@ -635,8 +635,10 @@ void EditorView::installLexer() {
   sci_->colourise(0, -1);
   // A language or rainbow change restyles everything, so the minimap's
   // entire strip cache is stale.
-  if (minimap_)
+  if (minimap_) {
+    minimap_->setLanguage(language_, rainbow_);
     minimap_->invalidateAll();
+  }
 }
 
 bool EditorView::minimapEnabledDefault() {

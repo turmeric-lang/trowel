@@ -17,7 +17,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network Concurrent)
 
 qt_standard_project_setup()
 
@@ -138,7 +138,7 @@ else()
     target_sources(trowel_lib PRIVATE src/repl/pty_session.cpp)
 endif()
 
-target_link_libraries(trowel_lib PUBLIC Qt6::Widgets Qt6::Network scintilla_qt)
+target_link_libraries(trowel_lib PUBLIC Qt6::Widgets Qt6::Network Qt6::Concurrent scintilla_qt)
 target_compile_options(trowel_lib PRIVATE
     -Wall -Wextra -Wpedantic -Werror
 )

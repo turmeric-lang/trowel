@@ -53,6 +53,24 @@ there is nothing else to install. To add a menu entry and register `.tur` /
   file opens, what drag-and-drop does, session restore, and where each
   window's REPL is rooted.
 - [Keyboard shortcuts](docs/guides/keyboard-shortcuts.md)
+- [Editor intelligence](docs/guides/editor-intelligence.md) — diagnostics,
+  completions, hover, go-to-definition, find references, rename, outline.
+- [Debugging](docs/guides/debugging.md) — breakpoints, stepping, call stack,
+  variables, and time-travel debugging over a recording.
+- [Tracing](docs/guides/tracing.md) — record an execution trace with
+  `tur trace`.
+- [Dialects](docs/guides/dialects.md) — Turmeric, Saffron, R7RS, and the sweet
+  reader; the `#lang` line and the dialect picker.
+- [Find, replace & folding](docs/guides/find-replace-and-folding.md) — the
+  find bar, search options, and code folding.
+- [Code formatting](docs/guides/formatting.md) — `tur fmt` and the Format File
+  command.
+- [Directory view](docs/guides/directory-view.md) — browse a project tree and
+  open files without leaving the editor.
+- [Scripting Trowel](docs/guides/scripting.md) — drive a running instance from
+  an external process over the control socket (automation, scripted demos).
+- [Building an AppImage](docs/guides/appimage.md) — package a self-contained
+  Linux AppImage.
 
 ## Build from source
 

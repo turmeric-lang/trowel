@@ -1,16 +1,113 @@
 #include "editor/minimap_view.h"
 
+#include "editor/scanner.h"
+#include "plugin/scanner_plugin_syntax.h"
+#include "plugin/syntax_descriptor.h"
+
 #include <Scintilla.h>
 #include <ScintillaEdit.h>
 
+#include <QtConcurrent>
+#include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QWheelEvent>
 
+#include <algorithm>
 #include <limits>
 
 namespace trowel {
+
+namespace {
+
+// All data the off-thread worker needs to render a strip. Captured on the
+// GUI thread (where Scintilla is accessible) and moved to the worker; no
+// Scintilla access happens off-thread.
+struct RenderParams {
+  QByteArray text;
+  int packedState = 0;
+  int lang = 0; // Language as int (see minimap_view.h)
+  bool rainbow = true;
+  QHash<int, QColor> styleFg;
+  QColor bg;
+  int widthPx = 90;
+  int linePx = 2;
+  int colPx = 1;
+  int stripLineCount = 0;
+  qreal dpr = 1.0;
+  const SyntaxDescriptor *pluginDesc = nullptr;
+};
+
+// Render a strip off the GUI thread. Drives the scanners via a BufferSink
+// (no Scintilla access) and paints the resulting style bytes into a QImage.
+QImage renderStripWorker(RenderParams p) {
+  const Language lang = static_cast<Language>(p.lang);
+  LexState st = UnpackLexState(p.packedState);
+
+  BufferSink sink(p.text.size());
+  Emitter out(sink, 0);
+  out.SetGapStyle(DefaultStyleFor(lang));
+
+  // Scan each line, mirroring ScannerLexer::Lex's line loop.
+  const char *const data = p.text.constData();
+  const Sci_Position textLen = p.text.size();
+  Sci_Position i = 0;
+  Sci_Position line = 0;
+  while (i < textLen) {
+    Sci_Position contentEnd = i;
+    while (contentEnd < textLen && data[contentEnd] != '\n' &&
+           data[contentEnd] != '\r')
+      ++contentEnd;
+    Sci_Position lineEnd = contentEnd;
+    if (lineEnd < textLen && data[lineEnd] == '\r') ++lineEnd;
+    if (lineEnd < textLen && data[lineEnd] == '\n') ++lineEnd;
+
+    ScanInput in{data, i, contentEnd, p.rainbow, line};
+    if (lang == Language::PluginSyntax && p.pluginDesc) {
+      ScanPluginSyntaxLine(*p.pluginDesc, in, st, out);
+    } else {
+      ScanLine(lang, in, st, out);
+    }
+    out.FillTo(lineEnd);
+
+    ++line;
+    i = lineEnd;
+  }
+
+  // Paint the style bytes into a QImage.
+  const int stripH = p.stripLineCount * p.linePx;
+  QImage img(QSize(p.widthPx, stripH), QImage::Format_RGB32);
+  img.setDevicePixelRatio(p.dpr);
+  img.fill(p.bg.rgba());
+
+  QPainter painter(&img);
+  painter.setRenderHint(QPainter::Antialiasing, false);
+
+  int col = 0;
+  int y = 0;
+  for (int j = 0; j < p.text.size(); ++j) {
+    const char ch = data[j];
+    const unsigned char style = sink.styles()[static_cast<size_t>(j)];
+    if (ch == '\n' || ch == '\r') {
+      col = 0;
+      y += p.linePx;
+      continue;
+    }
+    if (ch != ' ' && ch != '\t') {
+      auto it = p.styleFg.constFind(style);
+      QColor c = (it != p.styleFg.end()) ? it.value() : p.bg;
+      int x = col * p.colPx;
+      if (x < p.widthPx)
+        painter.fillRect(x, y, p.colPx, p.linePx, c);
+    }
+    ++col;
+  }
+
+  return img;
+}
+
+} // namespace
 
 MinimapView::MinimapView(ScintillaEdit *sci, QWidget *parent)
     : QWidget(parent), sci_(sci) {
@@ -40,12 +137,21 @@ void MinimapView::setTheme(const Theme &theme) {
   update();
 }
 
+void MinimapView::setLanguage(Language lang, bool rainbow) {
+  lang_ = static_cast<int>(lang);
+  rainbow_ = rainbow;
+  pluginDesc_ = (lang == Language::PluginSyntax)
+                    ? CurrentPluginSyntaxDescriptor()
+                    : nullptr;
+}
+
 void MinimapView::applySettings(bool enabled, int widthPx) {
   enabled_ = enabled;
   widthPx_ = qBound(40, widthPx, 200);
   setFixedWidth(widthPx_);
   setVisible(enabled);
   if (enabled) {
+    lastStyledEnd_ = sci_ ? sci_->endStyled() : 0;
     invalidateAll();
     syncToEditorScroll();
   }
@@ -58,14 +164,10 @@ int MinimapView::displayLineCount() const {
 }
 
 int MinimapView::docLineForY(int y) const {
-  // y is a pixel offset from the top of the minimap widget. Convert to a
-  // display line, then to a document line.
   const int widgetLines = height() / linePx_;
   const int totalDisplay = displayLineCount();
   if (totalDisplay <= widgetLines)
     return static_cast<int>(sci_->docLineFromVisible(y / linePx_));
-  // Proportional slide: the minimap scrolls, so map y to a display line
-  // offset by the current top.
   const int maxTop = totalDisplay - widgetLines;
   const int editorVis = static_cast<int>(sci_->firstVisibleLine());
   const int minimapTopVis =
@@ -110,15 +212,12 @@ QRect MinimapView::sliderRect() const {
   const int totalDisplay = displayLineCount();
   const int widgetLines = height() / linePx_;
   if (totalDisplay <= widgetLines) {
-    // Document fits: slider = editor viewport, 1:1.
     const int editorVis = static_cast<int>(sci_->firstVisibleLine());
     const int editorLines = static_cast<int>(sci_->linesOnScreen());
     const int top = editorVis * linePx_;
     const int h = qMax(1, editorLines * linePx_);
     return QRect(0, top, width(), h);
   }
-  // Proportional slide: slider represents the editor's viewport within the
-  // whole document.
   const int maxTop = totalDisplay - widgetLines;
   const int editorVis = static_cast<int>(sci_->firstVisibleLine());
   const int editorLines = static_cast<int>(sci_->linesOnScreen());
@@ -136,7 +235,6 @@ void MinimapView::scrollEditorToY(int y, bool center) {
   const int totalDisplay = displayLineCount();
   const int widgetLines = height() / linePx_;
   if (totalDisplay <= widgetLines) {
-    // 1:1: y maps directly to a display line.
     int displayLine = y / linePx_;
     if (center) {
       const int half = static_cast<int>(sci_->linesOnScreen()) / 2;
@@ -145,7 +243,6 @@ void MinimapView::scrollEditorToY(int y, bool center) {
     sci_->setFirstVisibleLine(displayLine);
     return;
   }
-  // Proportional slide: invert the minimap-top calculation.
   const int maxTop = totalDisplay - widgetLines;
   if (maxTop <= 0)
     return;
@@ -171,11 +268,12 @@ MinimapView::Strip &MinimapView::stripFor(int docLine) {
   return strips_[stripIdx];
 }
 
-void MinimapView::renderStrip(Strip &s) {
+void MinimapView::launchRender(Strip &s) {
   const int lineCount = static_cast<int>(sci_->lineCount());
   if (s.firstLine >= lineCount) {
     s.image = QImage();
     s.dirty = false;
+    s.rendering = false;
     return;
   }
 
@@ -186,60 +284,71 @@ void MinimapView::renderStrip(Strip &s) {
   if (len <= 0) {
     s.image = QImage();
     s.dirty = false;
+    s.rendering = false;
     return;
   }
 
-  // Colourise the strip range on the GUI thread before fetching styles.
-  // This is safe because strips are small (512 lines) and only the visible
-  // ones are rendered. The cap (kLineCap) prevents pathological files from
-  // reaching this path at all; phase 3 removes the cap by moving this off
-  // the GUI thread.
-  if (static_cast<sptr_t>(startPos) > sci_->endStyled()) {
-    sci_->colourise(startPos, endPos);
-  }
-
-  // Fetch styled text: SCI_GETSTYLEDTEXT returns a 2-byte cell array
-  // (character + style byte) via Sci_TextRange.
+  // Extract the strip text on the GUI thread — Scintilla is not thread-safe.
+  QByteArray text(len, '\0');
   Sci_TextRange tr;
   tr.chrg.cpMin = startPos;
   tr.chrg.cpMax = endPos;
-  QByteArray buf(len * 2, '\0');
-  tr.lpstrText = buf.data();
-  sci_->send(SCI_GETSTYLEDTEXT, 0, reinterpret_cast<sptr_t>(&tr));
+  tr.lpstrText = text.data();
+  sci_->send(SCI_GETTEXTRANGE, 0, reinterpret_cast<sptr_t>(&tr));
 
-  // Paint into a QImage at devicePixelRatio for crisp rendering.
-  const qreal dpr = devicePixelRatioF();
-  const int stripH = (lastLine - s.firstLine + 1) * linePx_;
-  QImage img(QSize(widthPx_, stripH), QImage::Format_RGB32);
-  img.setDevicePixelRatio(dpr);
-  img.fill(bg_.rgba());
-
-  QPainter p(&img);
-  p.setRenderHint(QPainter::Antialiasing, false);
-
-  int col = 0;
-  int y = 0;
-  for (int i = 0; i < len; ++i) {
-    const char ch = buf[i * 2];
-    const unsigned char style = static_cast<unsigned char>(buf[i * 2 + 1]);
-    if (ch == '\n' || ch == '\r') {
-      col = 0;
-      y += linePx_;
-      continue;
-    }
-    if (ch != ' ' && ch != '\t') {
-      auto it = styleFg_.constFind(style);
-      QColor c = (it != styleFg_.end()) ? it.value() : bg_;
-      int x = col * colPx_;
-      if (x < widthPx_) {
-        p.fillRect(x, y, colPx_, linePx_, c);
-      }
-    }
-    ++col;
+  // Seed the LexState from the line state at the strip's first line. Only
+  // meaningful where Scintilla has already styled that line; past
+  // endStyled() the line state may be stale, so seed with default.
+  int packedState = 0;
+  if (s.firstLine > 0 &&
+      static_cast<sptr_t>(startPos) <= sci_->endStyled()) {
+    packedState = static_cast<int>(sci_->lineState(s.firstLine - 1));
   }
 
-  s.image = img;
+  // Mark as in-flight before launching the worker.
   s.dirty = false;
+  s.rendering = true;
+
+  RenderParams params;
+  params.text = std::move(text);
+  params.packedState = packedState;
+  params.lang = lang_;
+  params.rainbow = rainbow_;
+  params.styleFg = styleFg_;
+  params.bg = bg_;
+  params.widthPx = widthPx_;
+  params.linePx = linePx_;
+  params.colPx = colPx_;
+  params.stripLineCount = lastLine - s.firstLine + 1;
+  params.dpr = devicePixelRatioF();
+  params.pluginDesc = pluginDesc_;
+
+  const int stripFirstLine = s.firstLine;
+  auto *watcher = new QFutureWatcher<QImage>(this);
+  connect(watcher, &QFutureWatcher<QImage>::finished, this,
+          [this, watcher, stripFirstLine] {
+            const QImage img = watcher->result();
+            watcher->deleteLater();
+
+            // Find the strip by firstLine — it may have been evicted or
+            // cleared (invalidateAll) while the render was in flight.
+            for (Strip &s : strips_) {
+              if (s.firstLine == stripFirstLine) {
+                s.rendering = false;
+                if (!s.dirty) {
+                  // Not re-invalidated during render: accept the result.
+                  s.image = img;
+                  update();
+                }
+                // If dirty, the render is stale; discard and let the next
+                // paintEvent re-launch.
+                return;
+              }
+            }
+            // Strip no longer exists: result discarded.
+          });
+
+  watcher->setFuture(QtConcurrent::run(renderStripWorker, std::move(params)));
 }
 
 // --- Painting ---
@@ -247,14 +356,6 @@ void MinimapView::renderStrip(Strip &s) {
 void MinimapView::paintEvent(QPaintEvent *) {
   if (!enabled_ || !sci_)
     return;
-
-  // Cap: hide the widget for pathological files. Phase 2 raises this to 1M;
-  // phase 3 removes it by moving rendering off-thread.
-  if (static_cast<sptr_t>(sci_->lineCount()) > kLineCap) {
-    QPainter p(this);
-    p.fillRect(rect(), bg_);
-    return;
-  }
 
   QPainter p(this);
   p.fillRect(rect(), bg_);
@@ -268,14 +369,14 @@ void MinimapView::paintEvent(QPaintEvent *) {
   const int lastStrip = bottomLine / kStripLines;
   for (int si = firstStrip; si <= lastStrip; ++si) {
     Strip &s = stripFor(si * kStripLines);
-    if (s.dirty)
-      renderStrip(s);
+    if (s.dirty && !s.rendering)
+      launchRender(s);
     if (!s.image.isNull()) {
-      // The strip covers lines [s.firstLine, s.firstLine + kStripLines).
-      // Draw it at the y offset relative to the minimap's top.
       const int yOff = yForDocLine(s.firstLine);
       p.drawImage(0, yOff, s.image);
     }
+    // Strips that are still rendering or not yet started draw as flat bg,
+    // already filled above.
   }
 
   // Slider overlay.
@@ -289,10 +390,6 @@ void MinimapView::paintEvent(QPaintEvent *) {
 }
 
 void MinimapView::evictStrips() {
-  // Count rendered strips. If over the cap, drop the least-recently-used
-  // ones — clearing their image and marking them dirty so they re-render
-  // on next access. The visible window is 2-3 strips, so the cap of 16
-  // gives plenty of headroom while bounding memory on large files.
   int rendered = 0;
   for (const Strip &s : strips_)
     if (!s.image.isNull())
@@ -322,11 +419,9 @@ void MinimapView::mousePressEvent(QMouseEvent *e) {
   const int y = static_cast<int>(e->position().y());
   const QRect sr = sliderRect();
   if (sr.contains(e->pos())) {
-    // Press inside the slider: begin drag, remembering the grab offset.
     dragging_ = true;
     dragGrabDy_ = y - sr.top();
   } else {
-    // Press outside: jump, then enter drag with the slider centered.
     scrollEditorToY(y - sr.height() / 2, false);
     dragging_ = true;
     dragGrabDy_ = sr.height() / 2;
@@ -354,18 +449,15 @@ void MinimapView::mouseReleaseEvent(QMouseEvent *) {
 }
 
 void MinimapView::wheelEvent(QWheelEvent *e) {
-  // Forward to the editor: scroll by the same number of lines Scintilla
-  // would, so trackpad momentum feels identical.
   const int delta = e->angleDelta().y();
   if (delta != 0) {
-    const int lines = -delta / 120 * 3; // 3 lines per notch, matching Scintilla
+    const int lines = -delta / 120 * 3;
     sci_->send(SCI_LINESCROLL, 0, lines);
   }
   syncToEditorScroll();
 }
 
 void MinimapView::resizeEvent(QResizeEvent *) {
-  // Strips are line-addressed, so a resize only changes the visible window.
   update();
 }
 
@@ -378,7 +470,7 @@ void MinimapView::leaveEvent(QEvent *) {
 
 void MinimapView::invalidateAll() {
   strips_.clear();
-  renderDebounce_.start(); // coalesces with any pending invalidation
+  renderDebounce_.start();
 }
 
 void MinimapView::invalidateLines(int firstLine, int lastLine) {
@@ -389,11 +481,24 @@ void MinimapView::invalidateLines(int firstLine, int lastLine) {
     if (i < strips_.size())
       strips_[i].dirty = true;
   }
-  renderDebounce_.start(); // restarts, coalescing a burst of edits
+  renderDebounce_.start();
 }
 
 void MinimapView::syncToEditorScroll() {
-  // Slider-only repaint; never re-renders strips.
+  // When Scintilla styles a new region (e.g. the user scrolls into an
+  // unvisited area), endStyled() advances. Invalidate the corresponding
+  // strips so they re-render with correct styles instead of the
+  // default-state fallback used for unvisited regions.
+  if (sci_) {
+    const sptr_t styled = sci_->endStyled();
+    if (styled > lastStyledEnd_) {
+      const int firstLine =
+          static_cast<int>(sci_->lineFromPosition(lastStyledEnd_));
+      const int lastLine = static_cast<int>(sci_->lineFromPosition(styled));
+      invalidateLines(firstLine, lastLine);
+      lastStyledEnd_ = styled;
+    }
+  }
   update();
 }
 

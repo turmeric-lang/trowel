@@ -1,15 +1,21 @@
 # Minimap — plan
 
-> **Status:** Phases 1–2 shipped. `MinimapView` (`src/editor/minimap_view.{h,cpp}`)
-> is in the tree, block-rendered via `SCI_GETSTYLEDTEXT` on the GUI thread,
-> on by default behind `editor.minimap` with a View-menu toggle (`Alt+M`) and
-> `editor.minimap` control command. Phase 2 added LRU strip eviction (16
-> strips), a 60 ms render debounce, dirty-range invalidation from the
-> modification position, and raised the line cap to 1M. The `StyleSink`
-> refactor and off-thread rendering (phase 3) have not landed yet. Word wrap
-> and folding are now on, so the geometry model uses display lines
-> (`visibleFromDocLine`/`docLineFromVisible`) from the start rather than the
-> identity the plan originally assumed.
+> **Status:** Phases 1–3 shipped. `MinimapView` (`src/editor/minimap_view.{h,cpp}`)
+> is in the tree, on by default behind `editor.minimap` with a View-menu toggle
+> (`Alt+M`) and `editor.minimap` control command. Phase 2 added LRU strip
+> eviction (16 strips), a 60 ms render debounce, dirty-range invalidation from
+> the modification position, and raised the line cap to 1M. Phase 3 moved strip
+> rendering off the GUI thread via `QtConcurrent`: the `StyleSink` refactor
+> (`scanner.h`) lets the same scanners paint into a `BufferSink` (off-thread
+> byte array) or `DocumentSink` (Scintilla's `IDocument`); `launchRender`
+> captures strip text + packed `LexState` on the GUI thread, a
+> `QtConcurrent::run` worker drives `ScanLine` per line and produces a `QImage`,
+> and a `QFutureWatcher` stores the result and calls `update()`. The document
+> cap is removed entirely and the forced `colourise` is gone — the worker seeds
+> from `sci_->lineState(firstLine - 1)` and falls back to `LexState{}` past
+> `endStyled()`. Word wrap and folding are now on, so the geometry model uses
+> display lines (`visibleFromDocLine`/`docLineFromVisible`) from the start
+> rather than the identity the plan originally assumed.
 
 A VSCode-style minimap down the side of the editor: a block-rendered, syntax-colored
 overview of the whole buffer with a draggable viewport slider. On by default;

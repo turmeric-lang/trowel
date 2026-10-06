@@ -4,7 +4,46 @@
 
 #include <ILexer.h>
 
+#include <algorithm>
+#include <vector>
+
 namespace trowel {
+
+struct SyntaxDescriptor;
+
+// ---------------------------------------------------------------------------
+// StyleSink
+// ---------------------------------------------------------------------------
+
+// Abstract destination for style bytes. The scanners write through an
+// Emitter, which writes through a StyleSink. DocumentSink paints into
+// Scintilla's IDocument (the live editor); BufferSink paints into a plain
+// byte array (the off-thread minimap renderer). The sink receives absolute
+// positions (base + offset) so each implementation handles the base its own
+// way.
+class StyleSink {
+public:
+    virtual ~StyleSink() = default;
+    virtual void Paint(Sci_Position pos, Sci_Position len, int style) = 0;
+};
+
+// Paints into a flat byte array. Used by the off-thread minimap renderer,
+// which cannot touch Scintilla. `pos` is absolute (base + from); for the
+// minimap base is 0, so pos is the offset within the strip text.
+class BufferSink final : public StyleSink {
+public:
+    explicit BufferSink(Sci_Position len) : styles_(static_cast<size_t>(len), 0) {}
+    void Paint(Sci_Position pos, Sci_Position len, int style) override {
+        if (pos < 0) return;
+        const size_t start = static_cast<size_t>(pos);
+        const size_t end = std::min(start + static_cast<size_t>(len), styles_.size());
+        const unsigned char s = static_cast<unsigned char>(style);
+        std::fill(styles_.begin() + start, styles_.begin() + end, s);
+    }
+    const std::vector<unsigned char>& styles() const { return styles_; }
+private:
+    std::vector<unsigned char> styles_;
+};
 
 // ---------------------------------------------------------------------------
 // Emitter
@@ -20,8 +59,8 @@ namespace trowel {
 // behind.
 class Emitter {
 public:
-    Emitter(Scintilla::IDocument* doc, Sci_Position base)
-        : doc_(doc), base_(base) {}
+    Emitter(StyleSink& sink, Sci_Position base)
+        : sink_(&sink), base_(base) {}
 
     void SetGapStyle(int style) { gapStyle_ = style; }
     int gapStyle() const { return gapStyle_; }
@@ -34,7 +73,7 @@ public:
 private:
     void Paint(Sci_Position from, Sci_Position len, int style);
 
-    Scintilla::IDocument* doc_;
+    StyleSink* sink_;
     Sci_Position base_;
     Sci_Position next_ = 0;
     int gapStyle_ = 0;
@@ -154,6 +193,12 @@ void ScanLine(Language lang, const ScanInput& in, LexState& st, Emitter& out);
 
 // The style a language paints unstyled bytes (and line terminators) with.
 int DefaultStyleFor(Language lang);
+
+// The current PluginSyntax descriptor, or null. Captured at setLanguage
+// time so the off-thread minimap renderer can call ScanPluginSyntaxLine
+// directly without the global index lookup (which would race with other
+// editors changing it).
+const SyntaxDescriptor* CurrentPluginSyntaxDescriptor();
 
 // Map a bracket nesting depth to its rainbow style, cycling through the
 // palette. Shared by the Turmeric and JSON scanners.

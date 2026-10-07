@@ -6,7 +6,7 @@
 #include "editor/lexers.h"
 #include "lsp/lsp_client.h"
 #include "lsp/lsp_position.h"
-#include "repl/repl_session.h"
+#include "repl/tur_invocation.h"
 
 #include <QCoreApplication>
 #include <QDir>

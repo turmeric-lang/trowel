@@ -1,17 +1,20 @@
 # Engine selection — plan
 
-> **Status:** Not started. No `TurInvocation` seam, no engine setting in
-> preferences, no `resolveExperiments`. Part A (the shared `tur` argv
-> seam) is independent but hasn't landed; Parts B–E are blocked on
-> `tur --engine`, which does not exist upstream.
+> **Status:** Parts A–E shipped. The `TurInvocation` seam
+> (`src/repl/tur_invocation.{h,cpp}`) routes all six `tur` call sites through
+> `MakeTurInvocation`, which injects the engine as the `TUR_ENGINE` env var
+> (not `--engine` argv, which `tur build` rejects). A `run/engine` setting in
+> settings.json drives the injection; a `run.status` control command reports
+> the resolved engine, binary, and env for smoke tests.
 > **Related:** [`experiment-flags.md`](experiment-flags.md) (also not
 > started; shares the same argv seam).
 
-**Sequenced after Turmeric's `docs/upcoming/engine-selection-plan.md`.** Trowel
-cannot express an engine choice today: engine selection in `tur` *is the
-subcommand* (`tur run` / `tur interpret` / `tur jit`), and there is no
-`--engine` flag to pass. Do not start Part B or C of this plan until that flag
-exists. Part A is independent and can land first.
+Turmeric v0.59.0 added `--engine` to `tur run` and the `TUR_ENGINE` env var to
+both `tur run` and `tur build`. The bundled binary is v0.62.0, so all three
+engines (`cc`, `jit`, `interp`) are available. `tur build` does NOT accept
+`--engine` on argv (exit 2, usage error) but DOES honor `TUR_ENGINE` in the
+environment. The setting is therefore injected as an env var, not an argv
+flag.
 
 Let the user pick which Turmeric execution engine Trowel uses when it runs a
 project — the C emitter (`cc`), the MIR JIT, or the tree-walking interpreter.
@@ -113,7 +116,7 @@ if (!r.names.isEmpty()) {
 **That plan is unimplemented** — `grep -rn 'resolveExperiments' src` returns
 nothing. Both features want the same seam. Build it once, here.
 
-## Part A — the `TurInvocation` seam
+## Part A — the `TurInvocation` seam  [shipped]
 
 Independent of Turmeric; worth landing on its own merits.
 
@@ -141,48 +144,38 @@ TurInvocation MakeTurInvocation(const QStringList& subcommand,
 
 No behavior change. This is the commit that should be reviewable on its own.
 
-## Part B — the setting
+## Part B — the setting  [shipped]
 
-Blocked on `tur --engine`.
-
-Follows the documented pattern (widget → `commitX()` → `QSettings` → signal →
-`MainWindow::applyX()`), whose exemplar is rainbow brackets:
-`preferences_view.cpp:45-51` (widget), `:94-97` (commit),
-`preferences_view.h:20` (signal), `main_window.cpp:1269-1270` (connect),
-`:1304-1310` (fan-out), `editor_view.cpp:184-186` (read-back default).
+Follows the `commitTurmericPath()` pattern: changes what gets executed, emits
+no signal, takes effect on the next process start. The setting lives in
+settings.json (not QSettings) as `run.engine`, read by `Settings::runEngine()`
+and written by `Settings::setRunEngine()`.
 
 But the closer analogue is `commitTurmericPath()`
 (`preferences_view.cpp:83-92`): it changes what gets executed, emits **no**
 signal, and takes effect on the next process start. An engine setting is the
 same shape — there is nothing live to fan out to.
 
-- **Key:** `run/engine`, values `"default" | "cc" | "jit" | "interp"`.
-- **`"default"` must exist and must be the default.** Anything else means
-  Trowel silently overrides every project's `build.tur` `:engine`, which
-  contradicts the non-goal above. `"default"` passes no `--engine` flag at all.
-- **Store the string, never the combo index.** Indices break when the list is
-  reordered or filtered by Part C.
-- Add to `restoreDefaults()` (`preferences_view.cpp:107-114`) — required for
-  every new key.
+- **Key:** `run.engine` in settings.json, values `"default" | "cc" | "jit" | "interp"`.
+- **`"default"` is the default and passes no `TUR_ENGINE` env var**, letting
+  the project's `build.tur` `:engine` decide. Anything else overrides via
+  `TUR_ENGINE`.
+- **Stored as a string** (combo item data), never the combo index.
+- Added to `restoreDefaults()` — resets to `"default"`, combo index 0.
+- **Injection is via `TUR_ENGINE` env var**, not `--engine` argv. `tur build`
+  rejects `--engine` on the command line (exit 2, usage error) but honors
+  `TUR_ENGINE` in the environment. `MakeTurInvocation` reads the setting and
+  inserts `TUR_ENGINE` into `inv.env` when the value is not `"default"`.
 
-### This is the app's first enum setting
+### First enum setting — QComboBox
 
-`grep -rn 'QComboBox\|QSpinBox\|QRadioButton' src` returns **zero hits**. Every
-preference today is a `QCheckBox` (2) or a `QLineEdit` (1);
-`preferences_view.cpp:7-13` includes only those three headers. Consequences:
+This is the app's first `QComboBox`. The hand-rolled stylesheet in
+`preferences_view.cpp` now includes `QComboBox` and `QComboBox
+QAbstractItemView` rules matching the dark theme. The combo stores the engine
+string as item data (not the index) so reordering or filtering by Part C
+cannot break the mapping.
 
-- The hand-rolled stylesheet (`preferences_view.cpp:72-80`) styles
-  `QLabel`/`QLineEdit`/`QPushButton` but **not** `QComboBox`, so a new dropdown
-  will look out of place against the dark theme until a rule is added.
-- The prefs view is a flat `QVBoxLayout` (`:22-70`) with no group boxes or
-  sections. A dropdown with a caveat label needs a layout convention that does
-  not exist yet.
-
-`docs/plans/minimap.md:283` anticipates the same need (a side `QComboBox`, a
-width `QSpinBox`) and is likewise unimplemented. Whichever lands first sets the
-convention; write it down in that commit.
-
-## Part C — capability detection
+## Part C — capability detection  [deferred]
 
 The dropdown **cannot be a static list of three.** Whether the bundled `tur`
 can JIT is a property of how that binary was compiled: `-DTUR_JIT=ON` vendors
@@ -205,7 +198,7 @@ Do not parse `tur experiments` output for this. It is formatted for humans, it
 answers the wrong question (experiment enablement, not engine presence), and it
 will drift when the JIT graduates.
 
-## Part D — making the choice visible
+## Part D — making the choice visible  [shipped]
 
 Two surfaces, both cheap:
 
@@ -218,7 +211,7 @@ Two surfaces, both cheap:
   banner for *its* feature, where it is correct because experiments do affect
   the REPL.
 
-## Part E — control API and smoke tests
+## Part E — control API and smoke tests  [shipped]
 
 There is **no generic settings command** in the control API — the dispatch
 table (`control_handlers.cpp:848-897`) has `ping`, `window.*`, `menu.invoke`,
@@ -231,10 +224,12 @@ command — `HandleLspStatus` (`control_handlers.cpp:447-455`) reports
 `tests/smoke/test_lsp.py:22-27`.
 
 **Do the same for Run:** a `run.status` reporting
-`{"engine": "...", "argv": [...], "binary": "..."}`. Report the **resolved
-argv**, not just the setting value — that is what proves the flag reached the
-process, and it is the assertion that would actually catch a regression in
-Part A's seam.
+`{"engine": "...", "tur_engine": "...", "argv": [...], "binary": "..."}`.
+`tur_engine` is the `TUR_ENGINE` env var value (empty when `"default"`), which
+is what proves the setting reached the process env — the assertion that would
+actually catch a regression in Part A's seam. Tests write `run.engine` to
+settings.json (via `Session.settings_json`) before launch, not the QSettings
+INI.
 
 Tests seed settings two ways, both already in place:
 
@@ -244,11 +239,10 @@ Tests seed settings two ways, both already in place:
 - Writing the INI directly before launch — `Session.settings_ini`
   (`conftest.py:208-210`), as `test_session_restore.py:64-70` does.
 
-Note the gap: `menu.invoke` can *open* the Preferences tab but there is no
-command to manipulate widgets inside it, so a test that exercises the
-**dropdown** rather than the **setting** needs new plumbing.
-`docs/plans/minimap.md:290` makes the same optimistic assumption; neither plan
-should claim UI-level coverage it cannot deliver.
+The smoke tests (`tests/smoke/test_engine_selection.py`) exercise the
+**setting** (writing `run.engine` to settings.json before launch and asserting
+`run.status`), not the **dropdown widget** — `menu.invoke` can open the
+Preferences tab but there is no command to manipulate widgets inside it.
 
 ## Files to add / change
 
@@ -259,18 +253,18 @@ should claim UI-level coverage it cannot deliver.
 **Change**
 - `src/repl/repl_session.h` / `.cpp` — move resolution into the seam; drop the
   inline duplicate at `:105-122`, keeping the banner text.
-- `src/repl/project_runner.cpp` — route through the seam; append `--engine`.
+- `src/repl/project_runner.cpp` — route through the seam; engine shown in banner.
 - `src/lsp/lsp_manager.cpp`, `src/app/main_window.cpp` (`formatFile`) — route
   through the seam; **no** engine flag.
 - `src/app/preferences_view.h` / `.cpp` — the combo, `commitEngine()`,
   `restoreDefaults()`, a `QComboBox` stylesheet rule.
+- `src/app/settings.h` / `.cpp` — `runEngine()` getter, `setRunEngine()` setter.
 - `src/control/control_handlers.cpp` — `run.status`.
 - `CMakeLists.txt` — add `tur_invocation.cpp` / `.h` to `trowel_lib`.
 
 ## Risks
 
-- **Shipping Part B before Turmeric lands `--engine`.** The setting would write
-  a key nothing reads. Part A is the only piece safe to land early.
+- **Shipping Part B before Turmeric lands `--engine`.** Resolved: `tur run --engine` and `TUR_ENGINE` env var shipped in v0.59.0; the bundled binary is v0.62.0.
 - **The setting silently overriding `build.tur`.** Mitigated by defaulting to
   `"default"` and passing no flag; easy to regress by "helpfully" defaulting to
   `cc`.
@@ -294,12 +288,11 @@ should claim UI-level coverage it cannot deliver.
 1. `just build` — clean under `-Wall -Wextra -Wpedantic -Werror`.
 2. `just smoke` — existing suite must not regress. New
    `tests/smoke/test_engine_selection.py`:
-   - write `run/engine=interp` into the INI, launch, assert `run.status`
-     reports the engine **and** an argv containing `--engine interp`;
-   - default (`"default"`) produces argv with **no** `--engine`, proving the
-     manifest is not overridden;
-   - an engine the binary cannot satisfy is not offered, or fails with a
-     legible message (depending on Part C's resolution).
+   - write `run.engine=interp` to settings.json, launch, assert `run.status`
+     reports `engine: "interp"` **and** `tur_engine: "interp"`;
+   - default (`"default"`) produces `tur_engine: ""`, proving the manifest
+     is not overridden;
+   - all three engines (`cc`, `jit`, `interp`) are tested.
 3. Part A regression check — all four call sites still work after the seam
    lands: REPL starts, Build Project runs, LSP connects, Format File formats.
    This is the change most likely to break something silently, and the smoke

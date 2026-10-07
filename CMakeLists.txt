@@ -91,6 +91,8 @@ add_library(trowel_lib STATIC
     src/repl/terminal_view.h
     src/repl/repl_session.cpp
     src/repl/repl_session.h
+    src/repl/tur_invocation.cpp
+    src/repl/tur_invocation.h
     src/repl/run_buffer.cpp
     src/repl/run_buffer.h
     src/control/control_server.cpp

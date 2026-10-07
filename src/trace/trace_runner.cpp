@@ -1,12 +1,11 @@
 #include "trace/trace_runner.h"
 
-#include "repl/repl_session.h"
+#include "repl/tur_invocation.h"
 #include "repl/terminal_view.h"
 
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
-#include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QStandardPaths>
 
@@ -153,17 +152,17 @@ RunResult TraceRunner::run(const QString& filePath) {
         return r;
     }
 
-    const QString binary = ResolveTurBinary();
-    if (binary.isEmpty()) {
-        r.message = QStringLiteral("Could not locate `tur` executable.");
-        return r;
-    }
-
-    // Beside the temp dir rather than beside the source: a recording is a build
-    // artifact and does not belong in the user's project.
     const QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
     recordingPath_ = QDir(tmpDir).filePath(
         QFileInfo(filePath).completeBaseName() + QStringLiteral(".turtrace"));
+
+    const TurInvocation inv =
+        MakeTurInvocation({"trace", filePath, "-o", recordingPath_},
+                          QFileInfo(filePath).absolutePath());
+    if (inv.binary.isEmpty()) {
+        r.message = QStringLiteral("Could not locate `tur` executable.");
+        return r;
+    }
 
     if (proc_) {
         proc_->deleteLater();
@@ -173,15 +172,7 @@ RunResult TraceRunner::run(const QString& filePath) {
     proc_ = new QProcess(this);
     proc_->setProcessChannelMode(QProcess::MergedChannels);
     proc_->setWorkingDirectory(QFileInfo(filePath).absolutePath());
-
-    // Same stdlib pinning as ReplSession::start and ProjectRunner::run — a
-    // `tur` found on PATH must not be paired with an ambient TUR_STDLIB_DIR.
-    const QString siblingStdlib = TurStdlibDirFor(binary);
-    if (!siblingStdlib.isEmpty()) {
-        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-        env.insert("TUR_STDLIB_DIR", siblingStdlib);
-        proc_->setProcessEnvironment(env);
-    }
+    proc_->setProcessEnvironment(inv.env);
 
     connect(proc_, &QProcess::readyReadStandardOutput, this, &TraceRunner::onReadyRead);
     connect(proc_, &QProcess::finished, this,
@@ -192,7 +183,7 @@ RunResult TraceRunner::run(const QString& filePath) {
             QString("[trowel] tur trace %1").arg(QFileInfo(filePath).fileName()));
     }
 
-    proc_->start(binary, {"trace", filePath, "-o", recordingPath_});
+    proc_->start(inv.binary, inv.args);
     if (!proc_->waitForStarted(3000)) {
         r.message = QStringLiteral("Failed to start `tur trace`.");
         return r;

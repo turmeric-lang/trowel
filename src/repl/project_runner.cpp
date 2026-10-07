@@ -2,11 +2,11 @@
 
 #include "repl/repl_session.h"
 #include "repl/terminal_view.h"
+#include "repl/tur_invocation.h"
 
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
-#include <QProcessEnvironment>
 
 namespace trowel {
 
@@ -46,8 +46,8 @@ RunResult ProjectRunner::run(const QString& projectDir) {
         return r;
     }
 
-    const QString binary = ResolveTurBinary();
-    if (binary.isEmpty()) {
+    const TurInvocation inv = MakeTurInvocation({"build", projectDir}, projectDir);
+    if (inv.binary.isEmpty()) {
         r.message = "Could not locate `tur` executable.";
         return r;
     }
@@ -59,15 +59,7 @@ RunResult ProjectRunner::run(const QString& projectDir) {
     proc_ = new QProcess(this);
     proc_->setProcessChannelMode(QProcess::MergedChannels);
     proc_->setWorkingDirectory(projectDir);
-
-    // Same stdlib pinning as ReplSession::start — a `tur` picked off PATH must
-    // not be paired with whatever TUR_STDLIB_DIR the ambient environment holds.
-    const QString siblingStdlib = TurStdlibDirFor(binary);
-    if (!siblingStdlib.isEmpty()) {
-        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-        env.insert("TUR_STDLIB_DIR", siblingStdlib);
-        proc_->setProcessEnvironment(env);
-    }
+    proc_->setProcessEnvironment(inv.env);
 
     connect(proc_, &QProcess::readyReadStandardOutput,
             this, &ProjectRunner::onReadyRead);
@@ -75,14 +67,18 @@ RunResult ProjectRunner::run(const QString& projectDir) {
             [this](int code, QProcess::ExitStatus) { onFinished(code); });
 
     if (terminal_) {
-        terminal_->showBanner(
-            QString("[trowel] tur build %1").arg(QDir::toNativeSeparators(projectDir)));
+        const QString turEngine = inv.env.value("TUR_ENGINE");
+        QString banner = QString("[trowel] tur build %1")
+                             .arg(QDir::toNativeSeparators(projectDir));
+        if (!turEngine.isEmpty())
+            banner += QString("  [engine: %1]").arg(turEngine);
+        terminal_->showBanner(banner);
     }
 
     // Pass the directory explicitly rather than relying on the cwd: `tur build`
     // needs a positional argument to take the manifest-driven project path
     // (a bare `tur build` has no input to discover from).
-    proc_->start(binary, {"build", projectDir});
+    proc_->start(inv.binary, inv.args);
     if (!proc_->waitForStarted(3000)) {
         r.message = "Failed to start `tur build`.";
         return r;

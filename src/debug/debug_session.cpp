@@ -1,6 +1,6 @@
 #include "debug/debug_session.h"
 
-#include "repl/repl_session.h"  // ResolveTurBinary
+#include "repl/tur_invocation.h"  // ResolveTurBinary
 
 #include <QJsonArray>
 

@@ -286,4 +286,19 @@ void Settings::setMinimapEnabled(bool enabled) {
     }
 }
 
+QString Settings::runEngine() const {
+    const QJsonValue v = impl_->values.value("run.engine");
+    return v.isString() ? v.toString() : QStringLiteral("default");
+}
+
+void Settings::setRunEngine(const QString& engine) {
+    impl_->values["run.engine"] = engine;
+    QDir().mkpath(impl_->configDir);
+    QSaveFile f(impl_->filePath);
+    if (f.open(QIODevice::WriteOnly)) {
+        f.write(QJsonDocument(impl_->values).toJson(QJsonDocument::Indented));
+        f.commit();
+    }
+}
+
 }  // namespace trowel

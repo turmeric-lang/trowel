@@ -1,10 +1,12 @@
 #include "app/preferences_view.h"
 
+#include "app/settings.h"
 #include "editor/editor_view.h"
 #include "editor/theme_loader.h"
 #include "lsp/lsp_manager.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -68,6 +70,32 @@ PreferencesView::PreferencesView(QWidget* parent)
     connect(lspCheck_, &QCheckBox::toggled, this, &PreferencesView::commitLspEnabled);
     root->addWidget(lspCheck_);
 
+    auto* engineLabel = new QLabel(QStringLiteral("Run engine"), this);
+    root->addWidget(engineLabel);
+
+    engineCombo_ = new QComboBox(this);
+    engineCombo_->setToolTip(QStringLiteral(
+        "Which Turmeric execution engine to use for Build Project / Run. "
+        "\"Default\" respects the project's build.tur :engine; the others "
+        "override it via TUR_ENGINE. Does not affect the REPL, which is "
+        "always tree-walked."));
+    // Store the string value as item data, never the combo index — indices
+    // break when the list is reordered or filtered.
+    engineCombo_->addItem(QStringLiteral("Default"), QStringLiteral("default"));
+    engineCombo_->addItem(QStringLiteral("cc (C emitter)"), QStringLiteral("cc"));
+    engineCombo_->addItem(QStringLiteral("jit (MIR JIT)"), QStringLiteral("jit"));
+    engineCombo_->addItem(QStringLiteral("interp (tree-walker)"), QStringLiteral("interp"));
+    const QString currentEngine = Settings::instance().runEngine();
+    for (int i = 0; i < engineCombo_->count(); ++i) {
+        if (engineCombo_->itemData(i).toString() == currentEngine) {
+            engineCombo_->setCurrentIndex(i);
+            break;
+        }
+    }
+    connect(engineCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &PreferencesView::commitEngine);
+    root->addWidget(engineCombo_);
+
     root->addStretch(1);
 
     auto* buttonRow = new QHBoxLayout();
@@ -83,6 +111,8 @@ PreferencesView::PreferencesView(QWidget* parent)
         "QWidget { background: %1; color: %2; }"
         "QLabel { background: transparent; }"
         "QLineEdit { background: %1; color: %2; border: 1px solid %3; padding: 4px; }"
+        "QComboBox { background: %1; color: %2; border: 1px solid %3; padding: 4px; }"
+        "QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %3; }"
         "QPushButton { background: %1; color: %2; border: 1px solid %3; padding: 4px 12px; }"
         "QPushButton:hover { background: %3; }"
     ).arg(theme.editorBg.name(),
@@ -119,6 +149,12 @@ void PreferencesView::commitLspEnabled(bool enabled) {
     if (!enabled) LspManager::instance()->shutdown();
 }
 
+void PreferencesView::commitEngine(int) {
+    if (!engineCombo_) return;
+    const QString engine = engineCombo_->currentData().toString();
+    Settings::instance().setRunEngine(engine);
+}
+
 void PreferencesView::restoreDefaults() {
     QSettings().remove("repl/turBinary");
     if (turPathEdit_) turPathEdit_->clear();
@@ -128,6 +164,8 @@ void PreferencesView::restoreDefaults() {
     if (bracketGuideCheck_) bracketGuideCheck_->setChecked(true);
     QSettings().remove("lsp/enabled");
     if (lspCheck_) lspCheck_->setChecked(true);
+    Settings::instance().setRunEngine(QStringLiteral("default"));
+    if (engineCombo_) engineCombo_->setCurrentIndex(0);
 }
 
 }

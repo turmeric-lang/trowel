@@ -59,6 +59,12 @@ public:
     bool minimapEnabled() const;
     void setMinimapEnabled(bool enabled);
 
+    // Execution engine for Build Project / Run. "default" passes no engine
+    // flag, letting build.tur :engine decide; "cc", "jit", or "interp"
+    // overrides via TUR_ENGINE env var. See docs/plans/engine-selection.md.
+    QString runEngine() const;
+    void setRunEngine(const QString& engine);
+
 signals:
     // Emitted after a reload with only the keys whose effective value changed.
     void changed(const QStringList& keys);

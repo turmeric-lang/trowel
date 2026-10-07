@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/dialect.h"
+#include "repl/tur_invocation.h"
 
 #include <QObject>
 #include <QString>
@@ -9,33 +10,6 @@ namespace trowel {
 
 class PtySession;
 class TerminalView;
-
-// Resolve the `tur` executable using the same order as ReplSession::start:
-// QSettings "repl/turBinary" override, then bundled binary inside Trowel.app,
-// then PATH lookup. Returns an absolute path, or an empty string when none
-// of the candidates exist and are executable.
-QString ResolveTurBinary();
-
-// The stdlib directory belonging to `turBinary`, or an empty string when it has
-// none beside it.
-//
-// Every `tur` invocation Trowel makes must pin TUR_STDLIB_DIR to this, or the
-// ambient environment pairs the binary we chose with somebody else's stdlib.
-// That is not hypothetical: this repo's own `mise.toml` pins turmeric 0.42.2,
-// and with the pin missing a v0.60.1 `tur lsp` analysed the 0.42.2 stdlib and
-// published twelve phantom errors against every clean buffer -- `#fx{Construct}`
-// and `#fx{Bt}`, both of which that stdlib spells in the way v0.59.0 turned
-// into a hard error.
-//
-// BOTH archive shapes are probed, which is the whole reason this is a function
-// rather than one line repeated at each call site. `stdlib/` sits beside the
-// binary in the flat layout and one level up under `share/turmeric/` in the
-// prefix layout, and the released .tar.gz targets moved from the first to the
-// second after v0.46.0. Five call sites each had their own copy of the flat-only
-// probe; one had been fixed and four had not, so crossing that layout change
-// silently dropped the pin in the LSP, the formatter, the project runner and the
-// tracer while the REPL kept working.
-QString TurStdlibDirFor(const QString& turBinary);
 
 class ReplSession : public QObject {
     Q_OBJECT

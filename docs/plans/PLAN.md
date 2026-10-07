@@ -6,14 +6,16 @@
 > highlighting, folding, find/replace, word wrap, per-document state,
 > dialects (Saffron, R7RS, sweet), and a 29-test smoke suite. macOS, Linux,
 > and Windows all build and run. Bundled Turmeric pin is v0.62.0.
-> Remaining plans not started: [`engine-selection.md`](engine-selection.md),
-> [`experiment-flags.md`](experiment-flags.md),
+> Remaining plans not started: [`experiment-flags.md`](experiment-flags.md),
 > [`plugin-isolation.md`](plugin-isolation.md),
 > [`docs-pane.md`](docs-pane.md),
 > [`examples-menu.md`](examples-menu.md).
 > Partially open: [`minimap.md`](minimap.md) (phases 1–3 shipped, phase 4
 > polish not started), [`lsp-navigation.md`](lsp-navigation.md) (T0–T3
 > shipped, Cmd/Ctrl-click to definition deferred).
+> Shipped: [`engine-selection.md`](engine-selection.md) (Parts A–E all
+> shipped — `TurInvocation` seam, `run.engine` setting, `TUR_ENGINE` env
+> injection, build banner, `run.status` command, smoke tests).
 
 Trowel is a C/C++ text editor built with CMake that embeds Scintilla and a
 terminal emulator in draggable split panes. It is purpose-built for

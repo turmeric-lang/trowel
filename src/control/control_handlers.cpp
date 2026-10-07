@@ -4,6 +4,7 @@
 #include "control/control_connection.h"
 #include "app/document_state.h"
 #include "app/main_window.h"
+#include "app/settings.h"
 #include "app/window_manager.h"
 #include "plugin/command_registry.h"
 #include "debug/breakpoint_model.h"
@@ -15,6 +16,7 @@
 #include "repl/pty_session.h"
 #include "repl/terminal_view.h"
 #include "repl/run_buffer.h"
+#include "repl/tur_invocation.h"
 
 #include <ScintillaEdit.h>
 
@@ -1521,6 +1523,21 @@ void HandleRunSelection(MainWindow* w, const QJsonObject&, const Reply& reply) {
     reply(Ok(), nullptr);
 }
 
+void HandleRunStatus(MainWindow*, const QJsonObject&, const Reply& reply) {
+    // Report the resolved invocation that Build Project would use, so a test
+    // can prove the engine setting reached the process env without spawning
+    // a build. The argv is a sample (no project dir); the env is what matters.
+    const TurInvocation inv = MakeTurInvocation({QStringLiteral("build")});
+    QJsonObject o;
+    o["engine"] = Settings::instance().runEngine();
+    o["binary"] = inv.binary;
+    o["tur_engine"] = inv.env.value(QStringLiteral("TUR_ENGINE"));
+    QJsonArray argv;
+    for (const QString& a : inv.args) argv.append(a);
+    o["argv"] = argv;
+    reply(o, nullptr);
+}
+
 // --- Debug --------------------------------------------------------------
 
 void HandleDebugStart(MainWindow* w, const QJsonObject& args, const Reply& reply) {
@@ -2045,6 +2062,7 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "lang.set_session")     { HandleLangSetSession(w, args, reply); return; }
     if (cmd == "run.buffer")           { HandleRunBuffer(w, args, reply); return; }
     if (cmd == "run.selection")        { HandleRunSelection(w, args, reply); return; }
+    if (cmd == "run.status")          { HandleRunStatus(w, args, reply); return; }
 
     if (cmd == "debug.start")          { HandleDebugStart(w, args, reply); return; }
     if (cmd == "debug.stop")           { HandleDebugStop(w, args, reply); return; }

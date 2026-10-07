@@ -1,59 +1,16 @@
 #include "repl/repl_session.h"
 
-#include "app/settings.h"
 #include "repl/pty_session.h"
 #include "repl/terminal_view.h"
+#include "repl/tur_invocation.h"
 
-#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
-#include <QStandardPaths>
 #include <QUrl>
 
 namespace trowel {
 
 namespace {
-
-QString ifExecutable(const QString& path) {
-    if (path.isEmpty()) return {};
-    const QFileInfo fi(path);
-    if (!fi.exists() || !fi.isFile() || !fi.isExecutable()) return {};
-    return fi.absoluteFilePath();
-}
-
-// Path to the bundled `tur` shipped inside Trowel.app. Empty string on dev
-// builds where no binary was staged (falls through to PATH).
-//
-// Both published archive shapes are probed, because Turmeric has shipped both.
-// The windows-x86_64 .zip has always used the PREFIX layout -- bin/, lib/,
-// include/, share/turmeric/stdlib/ -- while the three .tar.gz targets shipped
-// FLAT (`tur` and `stdlib/` at the archive root) through v0.46.0 before being
-// unified onto the prefix layout. CMake stages the fetched archive verbatim, so
-// the staged tree is whichever shape the pinned TROWEL_TURMERIC_VERSION
-// happened to publish. Accepting either is what keeps bumping that pin across
-// the change a one-line edit instead of a coordinated one. See the
-// turmeric-side report `unify-release-archive-layout`.
-QString bundledTurPath() {
-    const QString appDir = QCoreApplication::applicationDirPath();
-#ifdef Q_OS_MACOS
-    const QString root = QDir::cleanPath(appDir + "/../Resources/turmeric");
-#else
-    const QString root = QDir::cleanPath(appDir + "/turmeric");
-#endif
-#ifdef Q_OS_WIN
-    const QString exe = QStringLiteral("/tur.exe");
-#else
-    const QString exe = QStringLiteral("/tur");
-#endif
-    const QString prefixShape = QDir::cleanPath(root + "/bin" + exe);
-    if (QFileInfo::exists(prefixShape)) return prefixShape;
-    const QString flatShape = QDir::cleanPath(root + exe);
-    if (QFileInfo::exists(flatShape)) return flatShape;
-    // Nothing staged -- a dev build. Name the prefix shape: it is what a
-    // current release unpacks to, so it is the more useful of the two to print
-    // in the "could not locate tur" banner below.
-    return prefixShape;
-}
 
 // Replace a leading `home` with `~`, or return empty when it isn't a prefix.
 QString abbreviateHome(const QString& path, const QString& home) {
@@ -84,25 +41,6 @@ QString displayPath(const QString& path) {
 
 } // namespace
 
-QString TurStdlibDirFor(const QString& turBinary) {
-    if (turBinary.isEmpty()) return {};
-    const QString turDir = QFileInfo(turBinary).absolutePath();
-    const QString flat = turDir + QStringLiteral("/stdlib");
-    if (QDir(flat).exists()) return flat;
-    const QString prefix =
-        QDir::cleanPath(turDir + QStringLiteral("/../share/turmeric/stdlib"));
-    if (QDir(prefix).exists()) return prefix;
-    return {};
-}
-
-QString ResolveTurBinary() {
-    const QString override = Settings::instance().turmericPath();
-    QString resolved = ifExecutable(override);
-    if (resolved.isEmpty()) resolved = ifExecutable(bundledTurPath());
-    if (resolved.isEmpty()) resolved = QStandardPaths::findExecutable("tur");
-    return resolved;
-}
-
 ReplSession::ReplSession(TerminalView* view, QObject* parent)
     : QObject(parent)
     , view_(view)
@@ -132,37 +70,6 @@ void ReplSession::start(const QString& workingDir, Dialect dialect) {
     busy_ = true;
     scanTail_.clear();
 
-    // Resolution order:
-    //   1. settings.json "turmeric.path" — user override (absolute path).
-    //   2. Bundled binary inside Trowel.app (drag-install path).
-    //   3. `tur` on the user's PATH (dev builds, homebrew, mise, …).
-    const QString override = Settings::instance().turmericPath();
-    const QString bundled = bundledTurPath();
-    const QString onPath = QStandardPaths::findExecutable(turBinary_);
-
-    QString resolved = ifExecutable(override);
-    if (resolved.isEmpty()) resolved = ifExecutable(bundled);
-    if (resolved.isEmpty()) resolved = onPath;
-
-    if (resolved.isEmpty()) {
-        QString msg = QString("[trowel] could not locate `%1`. Tried:").arg(turBinary_);
-        msg += QString("\n  1. settings.json turmeric.path = %1")
-                   .arg(override.isEmpty() ? QStringLiteral("(unset)") : override);
-        msg += QString("\n  2. bundled = %1").arg(bundled);
-        msg += QString("\n  3. PATH lookup for `%1`").arg(turBinary_);
-        msg += "\nTerminal input is disabled until this is resolved.";
-        view_->showBanner(msg);
-        return;
-    }
-
-    // Pin the stdlib to whichever `tur` we resolved, so the ambient environment
-    // cannot pair it with another version's. See TurStdlibDirFor.
-    QStringList extraEnv;
-    const QString siblingStdlib = TurStdlibDirFor(resolved);
-    if (!siblingStdlib.isEmpty()) {
-        extraEnv << QStringLiteral("TUR_STDLIB_DIR=") + siblingStdlib;
-    }
-
     // `tur repl --lang <base>` starts the session in a dialect, which is
     // cheaper and more honest than starting in Turmeric and immediately
     // switching: the switch resets the environment, so the first thing the user
@@ -175,11 +82,19 @@ void ReplSession::start(const QString& workingDir, Dialect dialect) {
     // reader spellings -- `--lang sweet-exp` and `--lang scheme` are both
     // "unknown --lang". `tur fmt --lang` is the other way round; see
     // DialectFmtLangFlag.
-    QStringList replArgs{"repl"};
+    QStringList subcommand{"repl"};
     if (dialect != Dialect::Turmeric) {
-        replArgs << "--lang" << QString::fromLatin1(DialectBaseToken(dialect));
+        subcommand << "--lang" << QString::fromLatin1(DialectBaseToken(dialect));
     }
-    if (!pty_->start(resolved, replArgs, workingDir, extraEnv)) {
+
+    const TurInvocation inv = MakeTurInvocation(subcommand, workingDir);
+    if (inv.binary.isEmpty()) {
+        view_->showBanner(inv.error);
+        return;
+    }
+
+    turBinary_ = inv.binary;
+    if (!pty_->start(inv.binary, inv.args, workingDir, inv.envEntries())) {
         // startFailed will fire and report.
         return;
     }

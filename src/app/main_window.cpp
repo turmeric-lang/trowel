@@ -2386,14 +2386,8 @@ void MainWindow::startDebugSession(bool replay) {
     // Pin TUR_STDLIB_DIR to the sibling of the resolved binary, exactly as
     // ReplSession::start does — the debuggee is a fresh process with no
     // inherited REPL environment.
-    QStringList extraEnv;
-    const QString tur = ResolveTurBinary();
-    if (!tur.isEmpty()) {
-        const QString siblingStdlib = TurStdlibDirFor(tur);
-        if (!siblingStdlib.isEmpty()) {
-            extraEnv << QStringLiteral("TUR_STDLIB_DIR=") + siblingStdlib;
-        }
-    }
+    const TurInvocation debugInv = MakeTurInvocation({"dap"}, replWorkingDir());
+    QStringList extraEnv = debugInv.envEntries();
 
     // A warning used to stand here: that a file without `(defn main [] …)`
     // would run straight through -- no entry stop, no breakpoint hits -- because
@@ -2429,11 +2423,6 @@ void MainWindow::startDebugSession(bool replay) {
 void MainWindow::formatFile() {
     EditorView* v = editorView();
     if (!v) return;
-    const QString binary = ResolveTurBinary();
-    if (binary.isEmpty()) {
-        statusBar()->showMessage("Could not locate `tur` executable.", 4000);
-        return;
-    }
 
     const Dialect dialect = v->dialect();
 
@@ -2444,9 +2433,19 @@ void MainWindow::formatFile() {
     // Every dialect goes through, the three sweet readers included: v0.61.0
     // parse-checks a sweet buffer and keeps it as written, where v0.60.1
     // reprinted the two Turmeric ones as s-expressions and had to be declined.
-    const QStringList args{"fmt", "--stdin", "--lang", DialectFmtLangFlag(dialect)};
+    const QStringList subcommand{"fmt", "--stdin", "--lang", DialectFmtLangFlag(dialect)};
+    const TurInvocation inv = MakeTurInvocation(subcommand);
+    if (inv.binary.isEmpty()) {
+        statusBar()->showMessage("Could not locate `tur` executable.", 4000);
+        return;
+    }
+
     QProcess proc;
-    proc.start(binary, args);
+    // `tur fmt` may not need TUR_STDLIB_DIR (it parses, it does not resolve
+    // imports), but the seam pins it unconditionally when a sibling stdlib
+    // exists — consistent with every other call site, and harmless.
+    proc.setProcessEnvironment(inv.env);
+    proc.start(inv.binary, inv.args);
     if (!proc.waitForStarted(3000)) {
         statusBar()->showMessage("Failed to start `tur fmt`.", 4000);
         return;

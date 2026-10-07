@@ -72,6 +72,15 @@ there is nothing else to install. To add a menu entry and register `.tur` /
 - [Building an AppImage](docs/guides/appimage.md) — package a self-contained
   Linux AppImage.
 
+## Documentation
+
+- [Guides](docs/guides/README.md) — how-to guides for using and building Trowel.
+- [Plans](docs/plans/README.md) — design and implementation plans for each
+  feature.
+- [Reported issues](docs/reported/README.md) — upstream Turmeric toolchain
+  defects and smoke-suite test failures, with the local record of what was
+  measured.
+
 ## Build from source
 
 ### macOS

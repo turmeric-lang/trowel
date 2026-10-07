@@ -16,6 +16,11 @@
 > `endStyled()`. Word wrap and folding are now on, so the geometry model uses
 > display lines (`visibleFromDocLine`/`docLineFromVisible`) from the start
 > rather than the identity the plan originally assumed.
+>
+> **Remaining open work: [Phase 4 — polish](#phase-4--polish--not-started--the-only-remaining-open-work)**
+> — prefs UI for side and width, left-side layout, diagnostics / selection /
+> caret-line / occurrences overlays, and optional native-scrollbar replacement.
+> Not started.
 
 A VSCode-style minimap down the side of the editor: a block-rendered, syntax-colored
 overview of the whole buffer with a draggable viewport slider. On by default;
@@ -411,9 +416,9 @@ private:
 }
 ```
 
-## Files to add / change
+## Files added / changed (phases 1–3, shipped)
 
-**Add**
+**Added**
 - `src/editor/minimap_view.h`, `src/editor/minimap_view.cpp`
 - `tests/smoke/test_minimap.py`
 
@@ -438,11 +443,18 @@ private:
 - `CMakeLists.txt` — add `minimap_view.cpp` / `.h` to `trowel_lib`.
 - `docs/smoke-tests.md` — the manual checklist below.
 
+> **Phase 4 (not started) adds:** the `preferences_view` controls above (side +
+> width UI), left-side layout support, and the diagnostics / selection /
+> caret-line / occurrences decoration overlays described in
+> [Decorations](#decorations). The `editor.minimap` control command and
+> View-menu toggle are already in place; `editor/minimapSide` and a width
+> spinbox are not.
+
 ## Phased rollout
 
 Each phase is independently shippable.
 
-### Phase 1 — a working minimap, off by default
+### Phase 1 — a working minimap, off by default  [shipped]
 Widget, strip cache, block render sourcing style bytes from Scintilla via
 `SCI_GETSTYLEDTEXT` on the GUI thread (option A), per-strip `colourise` before the
 fetch. Slider overlay, click/drag/wheel. `editor/minimap` pref + View-menu toggle,
@@ -451,20 +463,20 @@ GUI-thread style fetch is the only thing that cannot absorb a pathological file,
 this is the safety valve until phase 3 removes the need for it.
 Ships behind an off-by-default flag, so the blast radius is zero.
 
-### Phase 2 — incremental invalidation
+### Phase 2 — incremental invalidation  [shipped]
 Dirty-range plumbing from `modified` and `linesAdded`, LRU strip eviction, 60 ms render
 debounce, decorations-over-cache separation so scrolling and hovering never re-render.
 This is what turns phase 1 from "works" into "feels free while typing". Raise the cap
 to 1M lines. **Flip the default to on** and add the `Alt+M` shortcut — the debounce
 and eviction make the GUI-thread render safe enough for everyday use.
 
-### Phase 3 — off-thread rendering
+### Phase 3 — off-thread rendering  [shipped]
 The `StyleSink` refactor, then move `renderStrip` into a `QtConcurrent` worker seeded
 with `(strip text copy, sci_->lineState(firstLine - 1))`. Strips arrive asynchronously
 and repaint on completion; un-rendered strips draw as flat `minimapBg`. Removes the
 cap entirely and removes the forced `colourise`.
 
-### Phase 4 — polish
+### Phase 4 — polish  [not started — the only remaining open work]
 Prefs UI for side and width; left-side layout; diagnostics / selection / caret-line
 overlays; optional `setVScrollBar(false)` so the minimap replaces the native
 scrollbar the way VSCode does (deliberately last — do not remove the user's scrollbar

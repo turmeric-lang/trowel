@@ -28,7 +28,10 @@ def _cwd_banner(trowel):
         for line in trowel.call("repl.get_screen", {"lines": 200})["text"].splitlines()
         if "repl started in" in line
     ]
-    return lines[-1] if lines else None
+    if not lines:
+        return None
+    # Strip the "(experiments: ...)" suffix so endswith(dir) still works.
+    return lines[-1].split("  (experiments")[0].strip()
 
 
 def test_repl_banner_reports_working_directory(trowel):

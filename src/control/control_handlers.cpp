@@ -17,6 +17,7 @@
 #include "repl/terminal_view.h"
 #include "repl/run_buffer.h"
 #include "repl/tur_invocation.h"
+#include "repl/experiment_flags.h"
 
 #include <ScintillaEdit.h>
 
@@ -1538,6 +1539,31 @@ void HandleRunStatus(MainWindow*, const QJsonObject&, const Reply& reply) {
     reply(o, nullptr);
 }
 
+void HandleExperimentsStatus(MainWindow* w, const QJsonObject&, const Reply& reply) {
+    // Report the resolved experiment set for the active project, so a test can
+    // prove the scanner found the right source without spawning a REPL.
+    // `tur` reads experiments.tur and build.tur itself; Trowel reads them only
+    // for display. The working directory is the active editor's file directory
+    // (what `replWorkingDir()` uses), falling back to the REPL's cwd.
+    QString workingDir;
+    if (EditorView* e = w->editorView()) {
+        workingDir = QFileInfo(e->filePath()).absolutePath();
+    }
+    if (workingDir.isEmpty() && w->replSession() && w->replSession()->isRunning()) {
+        workingDir = w->replSession()->workingDir();
+    }
+    const ResolvedExperiments exp = ResolveExperiments(workingDir);
+    QJsonObject o;
+    QJsonArray names;
+    for (const QString& n : exp.names) names.append(n);
+    o["names"] = names;
+    o["source"] = exp.source;
+    o["opted_out"] = exp.optedOut;
+    o["file_path"] = ExperimentsFilePath();
+    o["working_dir"] = workingDir;
+    reply(o, nullptr);
+}
+
 // --- Debug --------------------------------------------------------------
 
 void HandleDebugStart(MainWindow* w, const QJsonObject& args, const Reply& reply) {
@@ -2063,6 +2089,7 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "run.buffer")           { HandleRunBuffer(w, args, reply); return; }
     if (cmd == "run.selection")        { HandleRunSelection(w, args, reply); return; }
     if (cmd == "run.status")          { HandleRunStatus(w, args, reply); return; }
+    if (cmd == "experiments.status")  { HandleExperimentsStatus(w, args, reply); return; }
 
     if (cmd == "debug.start")          { HandleDebugStart(w, args, reply); return; }
     if (cmd == "debug.stop")           { HandleDebugStop(w, args, reply); return; }

@@ -89,6 +89,7 @@ enum class Command {
     RestartReplIn,
     ClearRepl,
     RestartLanguageServer,
+    ExperimentFlags,
 
     // --- Window ---
     Minimize,

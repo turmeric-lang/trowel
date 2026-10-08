@@ -231,6 +231,7 @@ private slots:
     void prevTab();
     void closeCurrentTab();
     void openSettings();
+    void openExperimentsFile();
     void applyRainbowBrackets(bool enabled);
     void applyBracketPairGuides(bool enabled);
     void applyMinimapSettings();
@@ -445,6 +446,7 @@ private:
     QAction* outdentAction_ = nullptr;
     QAction* settingsAction_ = nullptr;
     QAction* turmericSettingsAction_ = nullptr;
+    QAction* editExperimentsAction_ = nullptr;
     // View menu actions (Phase 1).
     QAction* zoomInAction_ = nullptr;
     QAction* zoomOutAction_ = nullptr;

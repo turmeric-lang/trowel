@@ -296,6 +296,13 @@ class Session:
         return p
 
     @property
+    def experiments_file(self) -> Path:
+        """Where XDG_CONFIG_HOME puts turmeric/experiments.tur."""
+        p = self._tmp_path / "home" / ".config" / "turmeric" / "experiments.tur"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
     def doc_state_json(self) -> Path:
         """Where TROWEL_DATA_DIR puts document-state.json."""
         return self._tmp_path / "home" / "data" / "document-state.json"

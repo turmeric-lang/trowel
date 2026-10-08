@@ -22,6 +22,7 @@
 #include "plugin/hook_bus.h"
 #include "plugin/plugin_host.h"
 #include "repl/project_runner.h"
+#include "repl/experiment_flags.h"
 #include "trace/trace_runner.h"
 #include "repl/repl_session.h"
 
@@ -482,6 +483,10 @@ void MainWindow::setupMenus() {
     connect(turmericSettingsAction_, &QAction::triggered, this,
             [this]{ openSettingsDirectory(".config/turmeric"); });
     editMenu->addAction(turmericSettingsAction_);
+
+    editExperimentsAction_ = MakeAction("Experiment Flags…", Command::ExperimentFlags, this);
+    connect(editExperimentsAction_, &QAction::triggered, this, &MainWindow::openExperimentsFile);
+    editMenu->addAction(editExperimentsAction_);
 #endif
 
     // Update Edit action enabled state on focus changes and before the menu
@@ -790,6 +795,9 @@ void MainWindow::setupMenus() {
     connect(turmericSettingsAction_, &QAction::triggered, this,
             [this]{ openSettingsDirectory(".config/turmeric"); });
     menuBar()->insertAction(menuBar()->actions().first(), turmericSettingsAction_);
+    editExperimentsAction_ = MakeAction("Experiment Flags…", Command::ExperimentFlags, this);
+    connect(editExperimentsAction_, &QAction::triggered, this, &MainWindow::openExperimentsFile);
+    menuBar()->insertAction(menuBar()->actions().first(), editExperimentsAction_);
 #else
     aboutAction_ = MakeAction("&About Trowel", Command::About, this);
     connect(aboutAction_, &QAction::triggered, this, &MainWindow::showAbout);
@@ -906,6 +914,7 @@ void MainWindow::setupToolBar() {
     auto* settingsMenu = new QMenu(this);
     if (settingsAction_) settingsMenu->addAction(settingsAction_);
     if (turmericSettingsAction_) settingsMenu->addAction(turmericSettingsAction_);
+    if (editExperimentsAction_) settingsMenu->addAction(editExperimentsAction_);
 
     auto* settingsButton = new QToolButton(sideBar_->widget());
     settingsButton->setToolTip("Settings");
@@ -3180,6 +3189,15 @@ void MainWindow::openSettingsDirectory(const QString& relPath) {
 void MainWindow::openSettings() {
     Settings::instance().ensureFileExists();
     openPath(Settings::instance().path());
+}
+
+void MainWindow::openExperimentsFile() {
+    const QString path = EnsureExperimentsFile();
+    openPath(path);
+    if (auto* sb = statusBar()) {
+        sb->showMessage(QString("Editing %1 — restart the REPL to apply.")
+                            .arg(QDir::toNativeSeparators(path)), 8000);
+    }
 }
 
 void MainWindow::applyRainbowBrackets(bool enabled) {

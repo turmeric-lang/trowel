@@ -1,12 +1,13 @@
 # Experiment flags — plan
 
-> **Status:** Not started. No `resolveExperiments` or experiment-flag
-> handling anywhere in the codebase. The plan's interim path (Trowel
-> reads `experiments.tur` and forwards `--enable=`) is unimplemented;
-> the preferred path (turmeric reads the user file itself) has not been
-> filed upstream.
-> **Related:** [`engine-selection.md`](engine-selection.md) (also not
-> started; shares the same `MakeTurInvocation` seam).
+> **Status:** Shipped. Trowel creates and opens
+> `~/.config/turmeric/experiments.tur`, the REPL banner shows the resolved
+> experiment set, and an `experiments.status` control command reports the
+> resolved names and source for smoke tests. `tur` (v0.62.0) reads the user
+> file and `build.tur` `:enable` itself, so Trowel does not forward
+> `--enable=` — it reads the files only for display.
+> **Related:** [`engine-selection.md`](engine-selection.md) (shipped; shares
+> the `MakeTurInvocation` seam).
 
 Let the user pick which Turmeric experimental features are on when Trowel
 launches the REPL or evaluates a buffer. Three sources, in order of
@@ -83,36 +84,23 @@ experiments its code needs, and silently unioning the user's set would
 turn a green suite red for reasons the project owner never signed off
 on.
 
-## Wiring into the REPL
+## Wiring into the REPL  [shipped — preferred path]
 
-Two paths, depending on how far turmeric has come:
+Turmeric v0.62.0 reads `~/.config/turmeric/experiments.tur` and `build.tur`'s
+`:enable` key itself. Trowel does not forward `--enable=` on the command line
+— `tur repl` and `tur build` pick up the files on their own. Trowel's job is
+limited to:
 
-**Preferred, once turmeric reads the user file itself.** File an issue /
-plan against turmeric for a `XF_SRC_USER_CONFIG` source tag next to
-`XF_SRC_CLI` / `XF_SRC_MANIFEST` / `XF_SRC_WEB`, with the CLI, LSP, and
-REPL entry points reading `$XDG_CONFIG_HOME/turmeric/experiments.tur`
-before applying any project-level `:enable`. Trowel then does nothing
-special — `tur repl` picks up the file on its own. Trowel's job shrinks
-to the gear icon and the banner (below).
+1. Creating and opening the user file (the gear icon / menu item).
+2. Showing the resolved set in the REPL banner (read-only, for display).
+3. The `experiments.status` control command (read-only, for testing).
 
-**Interim, until that lands.** Trowel reads the file directly and
-forwards it:
-
-```cpp
-QStringList args{"repl"};
-const ResolvedExperiments r = resolveExperiments(workingDir);
-if (!r.names.isEmpty()) {
-    args << QString("--enable=%1").arg(r.names.join(","));
-    if (r.allowExperimental) args << "--allow-experimental";
-}
-pty_->start(resolved, args, workingDir);
-```
-
-`resolveExperiments(workingDir)` returns `{names, allowExperimental,
-source}`:
+`resolveExperiments(workingDir)` in `src/repl/experiment_flags.cpp` reads
+`build.tur` and `experiments.tur` for display only. It returns
+`{names, source, optedOut}`:
 
 1. If a `build.tur` upward from `workingDir` has an `:enable` list,
-   return it (possibly empty).
+   return it (possibly empty — an explicit `:enable []` means "opted out").
 2. Else return the user file's `:enable`.
 3. Else return `{}`.
 
@@ -120,42 +108,40 @@ The `build.tur` reader is a small scanner (skip `;` comments and
 `#| ... |#` blocks, find `:enable` followed by `[`, collect symbol tokens
 until `]`). The user file uses the same scanner. If either doesn't match
 the trivial shape (e.g. computed at read time), fall through to the next
-source and log once — do not attempt to embed a full turmeric evaluator
-in Trowel.
+source — do not attempt to embed a full turmeric evaluator in Trowel.
 
-Re-read on: REPL start/restart, and on save of `build.tur` or
-`experiments.tur` from within Trowel. Not on every keystroke.
+`--allow-experimental` was retired in v0.42.2 — enabling an experiment (via
+`--enable=<name>`, `build.tur`, or `experiments.tur`) is now the acknowledgment.
+Trowel does not pass it.
+
+Re-read on: REPL start/restart. Not on every keystroke.
 
 Show the resolved set once in the REPL banner:
 
 ```
-[trowel] tur repl started (experiments: forall-kinds, hkt-hrt — from build.tur)
+[trowel] tur repl started in ~/proj  (experiments: forall-kinds, hkt-hrt — from build.tur)
 ```
 
-The `from build.tur` / `from user settings` / `from CLI override` suffix
-tells the user which source won without them having to guess.
+The `from build.tur` / `from user settings` suffix tells the user which
+source won without them having to guess. When no experiments are set, the
+banner says `(experiments: none)`.
 
-## Toolbar: gear icon
+## Toolbar: gear icon  [shipped]
 
-Extend `MainWindow::setupToolBar` (see `src/app/main_window.cpp:136`)
-with a new action after the two run actions, separated by
-`addSeparator()`:
+The settings popup (the cog button at the bottom of the sidebar) now
+includes "Experiment Flags…" alongside "Settings…" and "Turmeric
+Settings…". The same action is also in the Edit menu as "Experiment
+Flags…" (non-macOS) and in the app menu (macOS).
 
-- `QAction* editExperimentsAction_` — tooltip
-  **"Edit experiment flags…"**.
-- Icon: `NerdIcon(NF::Cog, glyphSize, iconColor)`. Add
-  `constexpr char32_t Cog = 0xF0493; // nf-md-cog` to
-  `src/app/icon_font.h` alongside `Play` / `PlaylistPlay`; verify the
-  codepoint against the Nerd Font cheat sheet at implementation time.
-- Handler:
+- `QAction* editExperimentsAction_` — tooltip "Experiment Flags…".
+- Icon: reuses the existing `NF::Cog` settings button popup — no new
+  icon needed.
+- Handler (`openExperimentsFile()`):
     - Ensure `~/.config/turmeric/experiments.tur` exists (create with the
-      commented stub above if not).
-    - `QDesktopServices::openUrl(QUrl::fromLocalFile(path))` — opens in
-      the OS default text editor. No in-app editor, no modal.
+      commented stub if not).
+    - `openPath(path)` — opens in Trowel's own editor (not the OS default,
+      since Trowel is a text editor).
     - Status bar: `Editing <path> — restart the REPL to apply.`
-
-Also expose the same action under **Run → Experiment flags…** so
-keyboard-only users can find it without hunting the toolbar.
 
 ## Non-goals for v1
 
@@ -169,84 +155,32 @@ keyboard-only users can find it without hunting the toolbar.
 - **No merging of project and user sets.** `build.tur` wins outright
   when present.
 
-## Test plan
+## Test plan  [shipped]
 
-- REPL banner shows `experiments: none` when neither source is set.
-- User file with `:enable [foo]`, no `build.tur`: `tur repl` receives
-  `--enable=foo --allow-experimental`; banner says `from user settings`.
-- `build.tur` with `:enable [bar]`, user file with `[foo]`:
-  `--enable=bar`, banner says `from build.tur`.
-- `build.tur` with `:enable []` (explicit empty): no `--enable` flag,
-  banner says `from build.tur` (project explicitly opted out).
-- Malformed `experiments.tur`: status bar warning, no crash, empty set.
-- Gear icon opens the file; if it didn't exist, a stub is created first.
+`tests/smoke/test_experiment_flags.py` covers:
 
-## Smoke test: Van Laarhoven lens compiles under user-configured flags
+- `experiments.status` reports empty when no source is set.
+- User file with `:enable [reflected-measures]`: `experiments.status` reports
+  the name and `source: "user settings"`.
+- `build.tur` with `:enable [repl-jit-inline-c]` overrides the user file:
+  `experiments.status` reports `source: "build.tur"`.
+- `build.tur` with explicit empty `:enable []`: `experiments.status` reports
+  `opted_out: true`, `source: "build.tur"`.
+- REPL banner shows the experiment names and source.
+- REPL banner shows `experiments: none` when no flags are set.
+- Malformed `experiments.tur`: treated as no user-level flags, no crash.
 
-Adds one test to the smoke suite (`tests/smoke/`, see
-[smoke-tests.md](smoke-tests.md)) that proves the end-to-end path: user
-edits `experiments.tur`, restarts the REPL, evaluates a VL lens example,
-and turmeric accepts it. If the flag plumbing regresses, this test fails
-at the type checker before ever producing output.
+The `experiments.status` control command reports `{names, source,
+opted_out, file_path, working_dir}`, consumed by the smoke tests.
 
-Fixture: `tests/smoke/fixtures/van_laarhoven_lens.tur`. Copy the
-concrete form from turmeric's own suite
-(`tests/fixtures/van-laarhoven-lens-concrete/input.tur`) — it prints
-`3\n30\n4\n99`. The concrete form is deliberate; the generic form has
-extra inference caveats that aren't what this test is exercising.
+## Smoke test: Van Laarhoven lens  [deferred]
 
-Flags required, taken verbatim from that fixture's `flags` file:
+The plan's original smoke test used `forall-kinds, forall-constraints,
+hkt-hrt, forall-dict-pass` — flags that existed in earlier turmeric
+versions but are not present in v0.62.0 (which has `reflected-measures`
+and `repl-jit-inline-c`). The test is deferred until a turmeric version
+with flags that exercise a meaningful compile-time difference is bundled,
+or until the VL lens fixture is updated to use available flags.
 
-```
-forall-kinds, forall-constraints, hkt-hrt, forall-dict-pass
-```
-
-`--allow-experimental` is set from the file's own `:allow-experimental
-true` and forwarded automatically; the user does not repeat it on the
-command line.
-
-### Test body (`tests/smoke/test_experiment_flags.py`)
-
-```python
-def test_van_laarhoven_lens_compiles(fresh_trowel, fixture_files, tmp_path):
-    cfg = tmp_path / "turmeric" / "experiments.tur"
-    cfg.parent.mkdir(parents=True)
-    cfg.write_text(
-        ":enable [forall-kinds forall-constraints"
-        " hkt-hrt forall-dict-pass]\n"
-        ":allow-experimental true\n"
-    )
-    # fresh_trowel already sets XDG_CONFIG_HOME=tmp_path per test.
-
-    t = fresh_trowel()
-    t.file.open(str(fixture_files / "van_laarhoven_lens.tur"))
-    t.repl.restart()  # picks up the new settings file
-    banner = t.repl.expect_output("tur repl started", timeout=10)
-    assert "forall-kinds" in banner
-    assert "from user settings" in banner
-
-    t.run_buffer()
-    out = t.repl.expect_output("99", timeout=15)
-    assert "3\n30\n4\n99" in out
-    # Negative check: any TUR-E00xx line = type-check failure = flags
-    # didn't reach the compiler.
-    assert "TUR-E0" not in out
-```
-
-### Companion test: `build.tur` overrides the user file
-
-Same fixture, but drop a `build.tur` next to it with `:enable []`
-(explicit empty). Assert the REPL banner says
-`experiments: none (from build.tur)` and that running the buffer now
-fails with a `TUR-E` diagnostic — proving the project override actually
-suppressed the user-level flags rather than silently merging.
-
-### Skip conditions
-
-- Skip (don't fail) if the installed `tur` reports any of these flags as
-  unknown via `tur experiments`. This decouples the smoke suite from
-  turmeric's flag graduation cadence — when `forall-kinds` becomes
-  stable and the flag is retired, the test skips with a clear reason
-  instead of turning red across every PR until someone updates it.
-  Emit the skip reason: `flags no longer present in tur experiments:
-  <names>`.
+The skip condition from the original plan applies: skip if `tur
+experiments` reports the required flags as unknown.

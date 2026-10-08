@@ -44,6 +44,7 @@ QList<QKeySequence> mac(Command cmd) {
     case Command::RenameSymbol:       return {QKeySequence("F2")};
     case Command::Settings:           return {QKeySequence("Ctrl+,")};
     case Command::TurmericSettings:    return {};
+    case Command::ExperimentFlags:   return {};
 
     // --- Edit > Find (Phase 3) ---
     case Command::Find:               return {QKeySequence("Ctrl+F")};
@@ -153,6 +154,7 @@ QList<QKeySequence> other(Command cmd) {
     case Command::RenameSymbol:       return {QKeySequence("F2")};
     case Command::Settings:           return {QKeySequence("Ctrl+,")};
     case Command::TurmericSettings:    return {};
+    case Command::ExperimentFlags:   return {};
 
     // --- Edit > Find (Phase 3) ---
     case Command::Find:               return {QKeySequence("Ctrl+F")};
@@ -267,6 +269,7 @@ const char* CommandName(Command cmd) {
     case Command::RenameSymbol:       return "RenameSymbol";
     case Command::Settings:           return "Settings";
     case Command::TurmericSettings:    return "TurmericSettings";
+    case Command::ExperimentFlags:   return "ExperimentFlags";
 
     case Command::Find:               return "Find";
     case Command::FindReplace:        return "FindReplace";

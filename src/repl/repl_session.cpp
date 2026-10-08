@@ -1,5 +1,6 @@
 #include "repl/repl_session.h"
 
+#include "repl/experiment_flags.h"
 #include "repl/pty_session.h"
 #include "repl/terminal_view.h"
 #include "repl/tur_invocation.h"
@@ -387,8 +388,23 @@ void ReplSession::onStarted() {
     // Say where the REPL is rooted, not just that it started: with a REPL per
     // window, "which directory am I in?" is the question the banner should
     // answer, and the cwd is otherwise invisible until something breaks.
-    view_->showBanner(QString("[trowel] %1 repl started in %2")
-                          .arg(turBinary_, displayPath(lastWorkingDir_)));
+    QString banner = QString("[trowel] %1 repl started in %2")
+                          .arg(turBinary_, displayPath(lastWorkingDir_));
+
+    // Show the resolved experiment set so the user can tell which flags are
+    // active without reading the manifest. `tur` reads experiments.tur and
+    // build.tur itself; Trowel reads them only for display.
+    const ResolvedExperiments exp = ResolveExperiments(lastWorkingDir_);
+    if (exp.source.isEmpty()) {
+        banner += "  (experiments: none)";
+    } else if (exp.names.isEmpty()) {
+        banner += QString("  (experiments: none — from %1)").arg(exp.source);
+    } else {
+        banner += QString("  (experiments: %1 — from %2)")
+                      .arg(exp.names.join(", "), exp.source);
+    }
+
+    view_->showBanner(banner);
     emit started();
 }
 

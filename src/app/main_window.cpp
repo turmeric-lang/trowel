@@ -842,7 +842,9 @@ void MainWindow::addSideBarAction(QAction* action) {
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     button->setAutoRaise(true);
     button->setFixedSize(kSideBarButtonSize, kSideBarButtonSize);
-    // Insert before the trailing stretch.
+    // Insert before the trailing stretch.  If the plugin separator exists,
+    // show it — a plugin button is being added below the settings button.
+    if (pluginSeparator_) pluginSeparator_->show();
     sideBarLayout_->insertWidget(sideBarLayout_->count() - 1, button);
 }
 
@@ -928,6 +930,17 @@ void MainWindow::setupToolBar() {
     // button this narrow.
     settingsButton->setStyleSheet("QToolButton::menu-indicator { image: none; }");
     sideBarLayout_->insertWidget(sideBarLayout_->count() - 1, settingsButton);
+
+    // A separator between the settings button and any plugin-registered
+    // buttons.  Hidden until the first plugin button is added, so the bar
+    // looks unchanged when no plugins contribute buttons.
+    pluginSeparator_ = new QFrame(sideBar_->widget());
+    pluginSeparator_->setFrameShape(QFrame::HLine);
+    pluginSeparator_->setFixedHeight(1);
+    pluginSeparator_->setStyleSheet(QString("background: %1; border: none;")
+                                        .arg(theme.lineNumberFg.name()));
+    pluginSeparator_->hide();
+    sideBarLayout_->insertWidget(sideBarLayout_->count() - 1, pluginSeparator_);
 
     // Exactly as wide as the stack needs, plus the 1px divider the stylesheet
     // draws on the right — that border comes out of the viewport, so without it

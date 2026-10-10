@@ -24,6 +24,6 @@
   (fn [] (snippets-expand-at-cursor)))
 
 (trowel-register-button
-  "nf-md-playlist_play"
+  "0xF0411"   ; md-playlist_play
   "Expand Snippet"
   "snippets.expand")

@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QFileSystemWatcher>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -299,6 +300,16 @@ void Settings::setRunEngine(const QString& engine) {
         f.write(QJsonDocument(impl_->values).toJson(QJsonDocument::Indented));
         f.commit();
     }
+}
+
+QSet<QString> Settings::disabledPlugins() const {
+    QSet<QString> result;
+    const QJsonValue v = impl_->values.value("plugins.disabled");
+    if (!v.isArray()) return result;
+    for (const auto& name : v.toArray())
+        if (name.isString())
+            result.insert(name.toString());
+    return result;
 }
 
 }  // namespace trowel

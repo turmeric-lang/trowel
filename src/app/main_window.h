@@ -21,6 +21,7 @@ class QDragEnterEvent;
 class QDropEvent;
 class QMenu;
 class QBoxLayout;
+class QFrame;
 class QScrollArea;
 class QSplitter;
 class QStackedWidget;
@@ -403,6 +404,9 @@ private:
     // scrollbars are always off, so no chrome is ever painted.
     QScrollArea* sideBar_ = nullptr;
     QBoxLayout* sideBarLayout_ = nullptr;
+    // Separator between the settings button and plugin-registered buttons.
+    // Hidden until the first plugin button is added via addSideBarAction.
+    QFrame* pluginSeparator_ = nullptr;
     QAction* runBufferAction_ = nullptr;
     QAction* runSelectionAction_ = nullptr;
     QAction* restartReplAction_ = nullptr;

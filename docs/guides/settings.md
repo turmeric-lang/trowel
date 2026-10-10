@@ -38,6 +38,7 @@ exactly what you type in the file.
 | `editor.wrap.prose` | bool | `true` | Word-wrap Markdown and plain text by default. (Phase 4) |
 | `editor.wrap.code` | bool | `false` | Word-wrap code files by default. (Phase 4) |
 | `editor.rememberDocumentState` | bool | `true` | Remember caret, scroll, and folds per file. (Phase 6) |
+| `plugins.disabled` | array of strings | `[]` | Plugin names to skip at load time. Each entry is a plugin's directory name (e.g. `"bookmarks"`, `"snippets"`). All plugins are enabled by default; listing a name here disables it. Changes apply on next startup. |
 
 When Trowel creates the file, it writes `{}` and nothing else. It does
 not write every key with its default, because that would pin the

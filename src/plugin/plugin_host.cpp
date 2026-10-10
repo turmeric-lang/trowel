@@ -1,6 +1,7 @@
 #include "plugin_host.h"
 
 #include "app/main_window.h"
+#include "app/settings.h"
 #include "command_registry.h"
 #include "editor/editor_view.h"
 #include "editor/lexers.h"
@@ -193,52 +194,69 @@ void PluginHost::loadAll()
         + "/.trowel/plugins";
     turi_env_set_module_base_dir(env_, pluginsDir.toUtf8().constData());
 
-    // Scan plugin directories.
+    // Scan plugin directories.  Bundled plugins are scanned first, then user
+    // plugins, so a user plugin with the same name as a bundled one overrides
+    // it entirely — only one copy is loaded, preventing duplicate button
+    // registrations while still letting user plugins replace built-in commands.
     QStringList searchDirs;
-    // 1. Bundled plugins (read-only, shipped in the Qt resource system).
-    //    Loaded from :/plugins/ so they work in both dev and bundled builds
-    //    without CMake staging. User plugins can override bundled ones by
-    //    registering commands with the same id (the registry replaces by id).
-    searchDirs << ":/plugins";
-    // 2. User plugins.
-    searchDirs << pluginsDir;
+    searchDirs << ":/plugins";       // bundled (Qt resource system)
+    searchDirs << pluginsDir;        // user (~/.trowel/plugins)
 
+    // Resolve each plugin name to a single path, with later search dirs
+    // (user) winning over earlier ones (bundled).
+    QHash<QString, QString> pluginPaths;  // name → plugin.tur path
     for (const auto& dir : searchDirs) {
         QDir d(dir);
         if (!d.exists()) continue;
         const auto entries = d.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
         for (const auto& name : entries) {
             const QString pluginPath = d.absoluteFilePath(name + "/plugin.tur");
-            if (!QFile::exists(pluginPath)) continue;
-
-            QFile f(pluginPath);
-            if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                qWarning("[PluginHost] cannot read %s", qPrintable(pluginPath));
-                continue;
-            }
-            const QByteArray source = f.readAll();
-            f.close();
-
-            TuriValue result = turi_eval_with_path(
-                env_, source.constData(), pluginPath.toUtf8().constData());
-
-            if (turi_is_error(result)) {
-                const char* msg = turi_error_message(result);
-                qWarning("[PluginHost] plugin %s failed: %s",
-                         qPrintable(name), msg ? msg : "(unknown)");
-                if (mainWindow_) {
-                    mainWindow_->statusBar()->show();
-                    mainWindow_->statusBar()->showMessage(
-                        QStringLiteral("Plugin %1 failed: %2").arg(
-                            name, QString::fromUtf8(msg ? msg : "(unknown)")),
-                        5000);
-                }
-                continue;
-            }
-
-            loadedPlugins_ << name;
-            qDebug("[PluginHost] loaded plugin: %s", qPrintable(name));
+            if (QFile::exists(pluginPath))
+                pluginPaths.insert(name, pluginPath);
         }
+    }
+
+    // Plugins the user has disabled in settings.json.  All plugins are
+    // enabled by default; listing a name in "plugins.disabled" skips it.
+    const QSet<QString> disabled = Settings::instance().disabledPlugins();
+
+    for (auto it = pluginPaths.constBegin(); it != pluginPaths.constEnd(); ++it) {
+        const QString& name = it.key();
+        const QString& pluginPath = it.value();
+
+        if (disabled.contains(name)) {
+            qDebug("[PluginHost] plugin %s disabled by settings, skipping",
+                   qPrintable(name));
+            continue;
+        }
+
+        QFile f(pluginPath);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            qWarning("[PluginHost] cannot read %s", qPrintable(pluginPath));
+            continue;
+        }
+        const QByteArray source = f.readAll();
+        f.close();
+
+        TuriValue result = turi_eval_with_path(
+            env_, source.constData(), pluginPath.toUtf8().constData());
+
+        if (turi_is_error(result)) {
+            const char* msg = turi_error_message(result);
+            qWarning("[PluginHost] plugin %s failed: %s",
+                     qPrintable(name), msg ? msg : "(unknown)");
+            if (mainWindow_) {
+                mainWindow_->statusBar()->show();
+                mainWindow_->statusBar()->showMessage(
+                    QStringLiteral("Plugin %1 failed: %2").arg(
+                        name, QString::fromUtf8(msg ? msg : "(unknown)")),
+                    5000);
+            }
+            continue;
+        }
+
+        loadedPlugins_ << name;
+        qDebug("[PluginHost] loaded plugin: %s", qPrintable(name));
     }
 }
 

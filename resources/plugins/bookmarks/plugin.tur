@@ -33,22 +33,25 @@
   ""
   (fn [] (trowel-bookmark-clear)))
 
+;; Icon strings are hex Nerd Font codepoints, resolved by glyph name from the
+;; bundled Symbols Nerd Font cmap.  md-bookmark_arrow_down / _up do not exist
+;; in this font version, so next/prev use plain md-arrow_down / md-arrow_up.
 (trowel-register-button
-  "nf-md-bookmark"
+  "0xF00C0"   ; md-bookmark
   "Toggle Bookmark"
   "bookmarks.toggle")
 
 (trowel-register-button
-  "nf-md-bookmark_arrow_down"
+  "0xF0045"   ; md-arrow_down
   "Next Bookmark"
   "bookmarks.next")
 
 (trowel-register-button
-  "nf-md-bookmark_arrow_up"
+  "0xF005D"   ; md-arrow_up
   "Previous Bookmark"
   "bookmarks.prev")
 
 (trowel-register-button
-  "nf-md-bookmark_remove"
+  "0xF00C6"   ; md-bookmark_remove
   "Clear All Bookmarks"
   "bookmarks.clear")

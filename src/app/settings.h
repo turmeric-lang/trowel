@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QStringList>
+#include <QSet>
 #include <QFont>
 #include <QString>
 
@@ -64,6 +65,12 @@ public:
     // overrides via TUR_ENGINE env var. See docs/plans/engine-selection.md.
     QString runEngine() const;
     void setRunEngine(const QString& engine);
+
+    // Plugin enable/disable. Returns the set of plugin names the user has
+    // explicitly disabled in settings.json (key: "plugins.disabled", a JSON
+    // array of strings). All plugins are enabled by default; listing a name
+    // here skips it at load time. The name is the plugin's directory name.
+    QSet<QString> disabledPlugins() const;
 
 signals:
     // Emitted after a reload with only the keys whose effective value changed.

@@ -1,0 +1,13 @@
+;; Structs and vectors.
+
+(defstruct Point [x :int y :int])
+
+(let [p (Point 3 4)]
+  (println (.x p))
+  (println (.y p)))
+
+(let [v (vec-new)]
+  (vec-push! v 10)
+  (vec-push! v 20)
+  (vec-push! v 30)
+  (println (vec-len v)))

@@ -10,6 +10,15 @@
         <file alias="bookmarks/plugin.tur">plugins/bookmarks/plugin.tur</file>
         <file alias="snippets/plugin.tur">plugins/snippets/plugin.tur</file>
     </qresource>
+    <qresource prefix="/examples">
+        <file alias="hello.tur">examples/hello.tur</file>
+        <file alias="functions.tur">examples/functions.tur</file>
+        <file alias="option-result.tur">examples/option-result.tur</file>
+        <file alias="structs-vectors.tur">examples/structs-vectors.tur</file>
+        <file alias="effects.tur">examples/effects.tur</file>
+        <file alias="sweet.tur.sweet">examples/sweet.tur.sweet</file>
+        <file alias="scheme.scm">examples/scheme.scm</file>
+    </qresource>
     <qresource prefix="/keymap">
         <file alias="keymap-mac.tur">keymap-mac.tur</file>
         <file alias="keymap-other.tur">keymap-other.tur</file>

@@ -38,6 +38,7 @@
 #include <QDropEvent>
 #include <QMimeData>
 #include <QUrl>
+#include <QFile>
 #include <QFileDialog>
 #include <QInputDialog>
 #include <QActionGroup>
@@ -767,6 +768,28 @@ void MainWindow::setupMenus() {
     auto* shortcutsAction = MakeAction("Keyboard Shortcuts", Command::KeyboardShortcuts, this);
     connect(shortcutsAction, &QAction::triggered, this, &MainWindow::openKeyboardShortcuts);
     helpMenu->addAction(shortcutsAction);
+
+    // Grouped by topic, not by dialect: the dialect picker already owns that
+    // axis, and an example in another dialect is listed beside its twin.
+    auto* examplesMenu = helpMenu->addMenu("&Examples");
+    struct Example { const char* title; const char* resource; };
+    static const Example kExamples[] = {
+        {"Hello, Turmeric",       ":/examples/hello.tur"},
+        {"Functions and Control Flow", ":/examples/functions.tur"},
+        {"Option and Result",     ":/examples/option-result.tur"},
+        {"Structs and Vectors",   ":/examples/structs-vectors.tur"},
+        {"Algebraic Effects",     ":/examples/effects.tur"},
+        {nullptr, nullptr},
+        {"Sweet Syntax",          ":/examples/sweet.tur.sweet"},
+        {"R7RS Scheme",           ":/examples/scheme.scm"},
+    };
+    for (const Example& ex : kExamples) {
+        if (!ex.title) { examplesMenu->addSeparator(); continue; }
+        const QString resource = QString::fromLatin1(ex.resource);
+        auto* a = examplesMenu->addAction(QString::fromUtf8(ex.title));
+        connect(a, &QAction::triggered, this,
+                [this, resource]{ openExample(resource); });
+    }
 
     auto* turmericDocsAction = MakeAction("Turmeric Documentation", Command::TurmericDocumentation, this);
     connect(turmericDocsAction, &QAction::triggered, this, &MainWindow::openTurmericDocumentation);
@@ -3882,6 +3905,24 @@ void MainWindow::openTurmericDocumentation() {
     QDesktopServices::openUrl(QUrl(
         "https://turmeric-lang.org/docs/" +
         QString::fromUtf8(TROWEL_TURMERIC_VERSION)));
+}
+
+void MainWindow::openExample(const QString& resourcePath) {
+    QFile file(resourcePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        statusBar()->show();
+        statusBar()->showMessage("Could not load example.", 4000);
+        return;
+    }
+    Buffer* b = addBuffer(QString(), /*untitledIfEmpty=*/true);
+    if (!b) return;
+    auto* v = static_cast<EditorView*>(b->view);
+    v->setText(file.readAll());
+    // Untouched, the tab closes without a "save changes?" prompt.
+    v->sciWidget()->emptyUndoBuffer();
+    v->sciWidget()->setSavePoint();
+    activateBuffer(static_cast<int>(buffers_.size()) - 1);
+    refreshTabBar();
 }
 
 void MainWindow::openTrowelHelp() {

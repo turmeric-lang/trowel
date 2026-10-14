@@ -249,6 +249,10 @@ private slots:
     void openKeyboardShortcuts();
     void openTurmericDocumentation();
     void openTrowelHelp();
+    // Open a bundled example (a `:/examples/...` resource) in a new untitled
+    // tab. The `#lang` line travels with the text, so highlighting and Run
+    // pick the right dialect without any extra wiring.
+    void openExample(const QString& resourcePath);
     void reportIssue();
 
 public:

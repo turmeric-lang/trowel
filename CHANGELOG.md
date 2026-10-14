@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+- **Help → Examples.** Seven bundled, runnable examples (hello, functions and
+  control flow, Option/Result, structs and vectors, algebraic effects, sweet
+  syntax, R7RS Scheme), each opening in a new tab with its `#lang` line so
+  highlighting and Run use the right dialect. They are embedded in the binary.
+
 ### Changed (menu bar audit — Phase 1)
 - **Menu bar reorganised.** LSP and navigation commands moved from Run to a
   new **Go** menu. Edit actions (Undo, Redo, Cut, Copy, Paste, Select All,

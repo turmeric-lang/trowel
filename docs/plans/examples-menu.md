@@ -1,6 +1,7 @@
 # Examples menu — plan
 
-> **Status:** Not started. Split from the Try Turmeric triage in
+> **Status:** Done. `Help > Examples` ships seven bundled examples; see
+> "Resolution" at the end. Split from the Try Turmeric triage in
 > [`try-turmeric-improvements.md`](try-turmeric-improvements.md), which was
 > Part H of
 > [`dialects-saffron-and-r7rs.md`](dialects-saffron-and-r7rs.md).
@@ -71,3 +72,23 @@ entry file is the right `#lang` (§1.4 of the dialect survey).
 - Whether the docs pack bundles the tutorials, which would make this a
   consumer of [`docs-pane.md`](docs-pane.md) rather than a consumer of the
   repo.
+
+## Resolution
+
+- **Source (Part A):** `tutorials/` turned out to be three interactive YAML
+  lessons for the REPL (`quickstart.yaml`, `basics.yaml`, `eavt.yaml`), not
+  runnable programs, and the bundled toolchain (v0.62.0) ships no examples. So
+  the examples are hand-written `.tur` files in `resources/examples/`, embedded
+  through `resources.qrc` under `:/examples/`, and each was checked with
+  `tur interpret`. The guides were not scraped; that remains a follow-on if
+  the menu wants more topics. The docs pack (`docs-pane.md`) is not started,
+  so there was nothing to consume.
+- **Menu (Part B):** `Help > Examples`, built in `main_window.cpp`. Entries are
+  grouped by topic, with the sweet and R7RS variants after a separator.
+  `openExample()` opens an untitled tab, loads the text, and resets the save
+  point so an untouched example closes without a prompt.
+- **Runnability (Part C):** `test_examples_menu.py` opens every entry through
+  `menu.invoke`, checks the dialect, runs it, and asserts on its output.
+  The examples avoid `str-concat` and `print`: `str-concat` warns under
+  `tur interpret` and fails under `tur run`, and `print` does not exist in
+  v0.62.0.

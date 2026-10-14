@@ -1,0 +1,13 @@
+;; Hello, Turmeric -- prefix notation, strings, and a first function.
+;; Press Run to evaluate this buffer in the REPL.
+
+(println "Hello, Turmeric!")
+
+(defn greet [name :cstr] :void
+  (println name))
+
+(greet "Hello, world!")
+
+;; The operator comes first, inside the parentheses.
+(println (+ 1 2))
+(println (* 6 7))

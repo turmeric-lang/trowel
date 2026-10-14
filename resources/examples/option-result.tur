@@ -1,0 +1,12 @@
+;; Option and Result -- absence and failure as ordinary values.
+
+(println (some? (some 42)))
+(println (none? (none)))
+
+;; unwrap-or supplies a fallback instead of panicking.
+(println (unwrap-or (some 99) -1))
+(println (unwrap-or (none) -1))
+
+;; Result is either (ok value) or (err error).
+(println (ok? (ok 100)))
+(println (err? (ok 100)))

@@ -1,0 +1,23 @@
+;; Algebraic effects -- `perform` raises an effect, `handle` decides what it
+;; means. Swap the handler and the same code behaves differently.
+
+(defeffect Log [msg :cstr] :void)
+
+(defn do-work [] :void
+  (perform (Log "starting"))
+  (perform (Log "done")))
+
+(handle (do-work)
+  (Log [msg] k)
+    (do (println msg) (resume k (nil-value))))
+
+(handle (do-work)
+  (Log [msg] k)
+    (do (println msg) (println "-- logged") (resume k (nil-value))))
+
+;; An effect with a non-void result lets the handler supply a value.
+(defeffect Ask [] :int)
+
+(defn use-ask [] :int (+ 1 (perform (Ask))))
+
+(println (handle (use-ask) (Ask [] k) (resume k 41)))

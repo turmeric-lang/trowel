@@ -1,0 +1,28 @@
+;; Functions, let bindings, branching, loops, and closures.
+
+(defn square [x :int] :int (* x x))
+
+(defn factorial [n :int] :int
+  (if (<= n 1) 1 (* n (factorial (- n 1)))))
+
+(defn sign [n :int] :cstr
+  (cond (< n 0) "negative"
+        (= n 0) "zero"
+        else    "positive"))
+
+(defn make-adder [n :int] (fn [x :int] :int (+ x n)))
+
+(defn apply-twice [f (fn [int] int) x :int] :int (f (f x)))
+
+(println (square 9))
+(println (factorial 10))
+(println (sign -5))
+(println (let [x 10 y 20] (+ x y)))
+(println (let [add3 (make-adder 3)] (add3 7)))
+(println (apply-twice (fn [x :int] :int (* x 2)) 3))
+
+;; Turmeric has no counted `for`: loops are `while` plus a mutable binding.
+(let [^mut i 0]
+  (while (< i 3)
+    (println i)
+    (set! i (+ i 1))))

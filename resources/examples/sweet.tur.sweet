@@ -1,0 +1,14 @@
+#lang turmeric/sweet
+;; The sweet reader: indentation instead of most parentheses, and
+;; f(x y) calls. Use Run > Dialect to switch this buffer to another reader.
+
+defn square [x :int] :int
+  *(x x)
+
+defn factorial [n :int] :int
+  if <=(n 1)
+    1
+    *(n factorial(-(n 1)))
+
+println square(9)
+println factorial(10)

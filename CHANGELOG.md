@@ -9,6 +9,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 ### Added
+- **Docs pane.** Help → Turmeric Documentation now opens the full Turmeric
+  guides and API reference in a tab instead of the website. It leads on the
+  quickstart and a Recently Added list, has a browsable nav tree, and a search
+  box over guide text and API symbols. Code samples show in Turmeric or
+  sweet-exp, your choice. The docs are the release's `turmeric-docs` pack,
+  bundled (~2.9 MB) at the same version as the toolchain, so they work offline
+  and describe the `tur` you are running. Builds without a pack fall back to
+  the website.
 - **Help → Examples.** Seven bundled, runnable examples (hello, functions and
   control flow, Option/Result, structs and vectors, algebraic effects, sweet
   syntax, R7RS Scheme), each opening in a new tab with its `#lang` line so

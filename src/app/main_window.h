@@ -31,6 +31,7 @@ namespace trowel {
 class BreakpointModel;
 class DebugSession;
 class DirectoryView;
+class DocsView;
 class EditorView;
 class CommandPalette;
 class CommandRegistry;
@@ -79,6 +80,12 @@ public:
     bool openDropped(const QStringList& paths);
 
     EditorView* editorView() const;
+    // The active tab if it is the docs pane, else null.
+    DocsView* docsView() const;
+    // Show the bundled docs in this window's docs tab (creating it), optionally
+    // on `article` (pack path or slug) and with `query` in the search box.
+    // Null when this build has no docs pack.
+    DocsView* openDocs(const QString& article = {}, const QString& query = {});
     // One entry per open tab, in tab order; empty string for an Untitled or
     // otherwise pathless buffer. Exposed for the control socket so callers can
     // see the tab set, not just the active buffer.
@@ -247,6 +254,8 @@ private slots:
     void actualSize();
     void showAbout();
     void openKeyboardShortcuts();
+    // Help > Turmeric Documentation: the bundled docs pack in a tab, or the
+    // website when this build carries no pack.
     void openTurmericDocumentation();
     void openTrowelHelp();
     // Open a bundled example (a `:/examples/...` resource) in a new untitled

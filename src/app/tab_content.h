@@ -7,11 +7,11 @@ namespace trowel {
 
 // Abstract base for anything that can live inside a MainWindow tab.
 // Concrete kinds: EditorView (editable file buffer), DirectoryView (netrw-style
-// directory browser).
+// directory browser), DocsView (the Turmeric docs pack).
 class TabContent : public QWidget {
     Q_OBJECT
 public:
-    enum class Kind { Editor, Directory };
+    enum class Kind { Editor, Directory, Docs };
 
     explicit TabContent(QWidget* parent = nullptr) : QWidget(parent) {}
 

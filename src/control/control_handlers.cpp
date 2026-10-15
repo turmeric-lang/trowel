@@ -2,6 +2,7 @@
 #include "control/control_handlers.h"
 
 #include "control/control_connection.h"
+#include "app/docs_view.h"
 #include "app/document_state.h"
 #include "app/main_window.h"
 #include "app/settings.h"
@@ -1368,6 +1369,37 @@ void HandleLangBases(MainWindow*, const QJsonObject&, const Reply& reply) {
     reply(QJsonObject{{"bases", bases}}, nullptr);
 }
 
+// Snapshot of the docs tab for `docs.open` / `docs.state`.
+QJsonObject DocsState(DocsView* d) {
+    QJsonObject o{
+        {"version", d->pack().version()},
+        {"article", d->currentPath()},
+        {"query", d->query()},
+        {"code_syntax", d->codeSyntax()},
+        {"results", QJsonArray::fromStringList(d->resultPaths())},
+        {"recent", QJsonArray::fromStringList(d->recentPaths())},
+        {"text", d->plainText()},
+    };
+    return o;
+}
+
+// docs.open {article?, query?, code_syntax?}: show the docs tab, creating it.
+void HandleDocsOpen(MainWindow* w, const QJsonObject& args, const Reply& reply) {
+    DocsView* d = w->openDocs(args["article"].toString(), args["query"].toString());
+    if (!d) { ReplyErr(reply, "no_docs", "this build has no bundled docs pack"); return; }
+    // openDocs ignores an empty query; an explicit "" here means "clear it".
+    if (args.contains("query")) d->setQuery(args["query"].toString());
+    if (args.contains("code_syntax")) d->setCodeSyntax(args["code_syntax"].toString());
+    if (args.contains("home") && args["home"].toBool()) d->showHome();
+    reply(DocsState(d), nullptr);
+}
+
+void HandleDocsState(MainWindow* w, const QJsonObject&, const Reply& reply) {
+    DocsView* d = w->docsView();
+    if (!d) { ReplyErr(reply, "no_docs", "the active tab is not the docs pane"); return; }
+    reply(DocsState(d), nullptr);
+}
+
 void HandleLangGet(MainWindow* w, const QJsonObject&, const Reply& reply) {
     EditorView* e = RequireEditor(w, reply);
     if (!e) return;
@@ -2078,6 +2110,8 @@ void Dispatch(WindowManager* windows, QPointer<ControlConnection> conn,
     if (cmd == "repl.is_running")      { HandleReplIsRunning(w, args, reply); return; }
     if (cmd == "lang.bases")           { HandleLangBases(w, args, reply); return; }
     if (cmd == "lang.get")             { HandleLangGet(w, args, reply); return; }
+    if (cmd == "docs.open")            { HandleDocsOpen(w, args, reply); return; }
+    if (cmd == "docs.state")           { HandleDocsState(w, args, reply); return; }
     if (cmd == "editor.call_tip")      { HandleEditorCallTip(w, args, reply); return; }
     if (cmd == "find.state")           { HandleFindState(w, args, reply); return; }
     if (cmd == "find.set")             { HandleFindSet(w, args, reply); return; }

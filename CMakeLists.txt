@@ -28,6 +28,10 @@ qt_add_resources(TROWEL_RESOURCES resources/resources.qrc)
 add_library(trowel_lib STATIC
     src/app/directory_view.cpp
     src/app/directory_view.h
+    src/app/docs_pack.cpp
+    src/app/docs_pack.h
+    src/app/docs_view.cpp
+    src/app/docs_view.h
     src/app/icon_font.cpp
     src/app/icon_font.h
     src/app/main_window.cpp
@@ -191,6 +195,11 @@ endif()
 # the version must not be independently overridable via -D (which would leave a
 # stale cached value pointing at mismatched hashes).
 set(TROWEL_TURMERIC_VERSION "v0.62.0")
+# The docs pack is platform-independent, so one hash covers every host. It is
+# pinned to the same tag as the toolchain: the in-app docs must describe the
+# `tur` the user is running, not whatever the website serves today. Bump both
+# together; the hash is the docs line of the release's sha256sums.txt.
+set(TROWEL_TURMERIC_DOCS_SHA "f6216f0b7186f3ece00fe1c7128b80a9d0dffe3a446b6ef5c447af83db9013c9")
 
 # Select the release asset + its SHA-256 for this platform/arch. Hashes are from
 # the release's sha256sums.txt.
@@ -283,6 +292,40 @@ else()
         "No prebuilt Turmeric for ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}; "
         "Trowel will fall back to `tur` on PATH at runtime.")
 endif()
+
+# ---- Bundle the Turmeric docs pack for the in-app docs tab -----------------
+# `turmeric-docs-<tag>.tar.gz` is ~2.9 MB (6.5 MB unpacked) against a ~6 MB
+# toolchain archive, so bundling it is cheap and keeps Help > Turmeric
+# Documentation working offline. Only what DocsPack reads is staged -- the
+# index plus the guide and API article bodies; the pack's own css/js and its
+# spices page are for the browser renderers.
+include(FetchContent)
+FetchContent_Declare(turmeric_docs_pack
+    URL      "https://github.com/turmeric-lang/turmeric/releases/download/${TROWEL_TURMERIC_VERSION}/turmeric-docs-${TROWEL_TURMERIC_VERSION}.tar.gz"
+    URL_HASH SHA256=${TROWEL_TURMERIC_DOCS_SHA}
+)
+FetchContent_MakeAvailable(turmeric_docs_pack)
+set(_docs_pack_src "${turmeric_docs_pack_SOURCE_DIR}/web/public/docs-pack")
+if(NOT EXISTS "${_docs_pack_src}/index.json")
+    message(FATAL_ERROR "Docs pack ${TROWEL_TURMERIC_VERSION} has no web/public/docs-pack/index.json "
+                        "(looked in ${turmeric_docs_pack_SOURCE_DIR}); its layout changed.")
+endif()
+if(APPLE)
+    set(_docs_stage_dir "$<TARGET_BUNDLE_CONTENT_DIR:trowel>/Resources/turmeric-docs")
+else()
+    set(_docs_stage_dir "$<TARGET_FILE_DIR:trowel>/turmeric-docs")
+endif()
+# rm -rf first for the same reason as the toolchain: copy_directory merges.
+add_custom_command(TARGET trowel POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${_docs_stage_dir}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_docs_stage_dir}"
+    COMMAND ${CMAKE_COMMAND} -E copy "${_docs_pack_src}/index.json" "${_docs_stage_dir}/index.json"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${_docs_pack_src}/guides" "${_docs_stage_dir}/guides"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${_docs_pack_src}/api" "${_docs_stage_dir}/api"
+    COMMENT "Staging Turmeric ${TROWEL_TURMERIC_VERSION} docs pack next to trowel"
+    VERBATIM
+)
+
 
 # ---- Link libturi (in-process Turmeric eval) into trowel_lib ---------------
 # The prebuilt archive fetched above ships lib/libturi.a and the C embedding

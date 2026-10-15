@@ -1,6 +1,7 @@
 # Docs pane — plan
 
-> **Status:** Not started. Split from the Try Turmeric triage in
+> **Status:** Done. Bundled pack, docs tab, nav tree, search and home page
+> shipped; see "Decisions" at the end. Split from the Try Turmeric triage in
 > [`try-turmeric-improvements.md`](try-turmeric-improvements.md), which was
 > Part H of
 > [`dialects-saffron-and-r7rs.md`](dialects-saffron-and-r7rs.md).
@@ -79,3 +80,34 @@ pre-built strings prove thin.
 - Tab vs. docked panel (Part B) — a chrome decision.
 - What format the article bodies are in (HTML vs. markdown) — check the
   actual pack contents before designing the renderer path.
+
+## Decisions
+
+Measured and probed against `turmeric-docs-v0.62.0.tar.gz`, not assumed.
+
+- **Bundle vs. fetch: bundled.** The pack is 2.9 MB compressed (6.5 MB
+  unpacked: `index.json` 0.5 MB, `guides/` 3.9 MB, `api/` 2.0 MB) against a
+  ~6 MB toolchain archive. It is a second `FetchContent` in `CMakeLists.txt`,
+  pinned to the toolchain tag, with one platform-independent SHA-256
+  (`TROWEL_TURMERIC_DOCS_SHA`, bumped alongside `TROWEL_TURMERIC_VERSION`).
+  Only `index.json`, `guides/` and `api/` are staged, to
+  `Resources/turmeric-docs/` (macOS) or `turmeric-docs/` beside the binary.
+- **Tab, not docked panel.** `TabContent::Kind::Docs`; it reuses the tab
+  machinery wholesale and sits beside the code. One docs tab per window.
+- **Article bodies are HTML fragments**, not markdown, so the existing
+  markdown renderer is not involved. They render in a `QTextBrowser` (no
+  WebEngine dependency). Two things in them need a script that does not run
+  there: every code sample carries both a turmeric and a sweet-exp variant with
+  a toggle, so `DocsView` picks one itself (toolbar combo) and strips the
+  toggle chrome.
+- **The pack layout differs from this plan's description in one way:** there
+  is no `spices/` content (an empty list), and the nav is `index.json`'s
+  `guides` and `api` lists grouped by `category`, not a stored tree.
+- **Search is the pre-built `words` strings** (every term must match; titles,
+  slugs and API symbols outrank body hits). No full-text index.
+- **Recently Added is by `added` date, newest 10, not "since the user's
+  version".** The index records dates, not versions, so a since-version cut is
+  not derivable; revisit if the pack grows a version field per entry.
+
+Not done: opening the pane on the symbol under the cursor (the API pages carry
+`symbols`, so it is a lookup away), and a full-text index.

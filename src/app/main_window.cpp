@@ -1,6 +1,7 @@
 #include "app/main_window.h"
 
 #include "app/directory_view.h"
+#include "app/docs_view.h"
 #include "app/document_state.h"
 #include "app/icon_font.h"
 #include "app/settings.h"
@@ -1028,6 +1029,8 @@ int MainWindow::indexOfView(TabContent* v) const {
 }
 
 QString MainWindow::computeDisplayName(const Buffer& buf) const {
+    if (buf.view && buf.view->kind() == TabContent::Kind::Docs)
+        return buf.view->displayName();
     if (buf.view && buf.view->kind() == TabContent::Kind::Directory) {
         const QString name = buf.view->displayName();
         return name.isEmpty() ? QStringLiteral("Directory") : name;
@@ -1206,6 +1209,7 @@ void MainWindow::connectBufferSignals(int index) {
         });
         return;
     }
+    if (view->kind() == TabContent::Kind::Docs) return;
 
     auto* editor = static_cast<EditorView*>(view);
     // P4: install the Tab-key event filter for snippet expansion.
@@ -3902,9 +3906,55 @@ void MainWindow::openKeyboardShortcuts() {
 }
 
 void MainWindow::openTurmericDocumentation() {
+    if (openDocs()) return;
+    // No bundled pack (an unsupported host, or a build without one): the
+    // website carries the same pages for this version.
     QDesktopServices::openUrl(QUrl(
         "https://turmeric-lang.org/docs/" +
         QString::fromUtf8(TROWEL_TURMERIC_VERSION)));
+}
+
+DocsView* MainWindow::docsView() const {
+    if (activeIndex_ < 0 || activeIndex_ >= static_cast<int>(buffers_.size())) return nullptr;
+    TabContent* v = buffers_[activeIndex_]->view;
+    return v && v->kind() == TabContent::Kind::Docs ? static_cast<DocsView*>(v) : nullptr;
+}
+
+DocsView* MainWindow::openDocs(const QString& article, const QString& query) {
+    // One docs tab per window: a second would only duplicate the history.
+    for (int i = 0; i < static_cast<int>(buffers_.size()); ++i) {
+        TabContent* v = buffers_[i]->view;
+        if (v && v->kind() == TabContent::Kind::Docs) {
+            activateBuffer(i);
+            auto* dv = static_cast<DocsView*>(v);
+            if (!article.isEmpty()) dv->showArticle(article);
+            if (!query.isEmpty()) dv->setQuery(query);
+            return dv;
+        }
+    }
+
+    const QString dir = DocsPack::locate();
+    if (dir.isEmpty()) return nullptr;
+    auto* dv = new DocsView(editorStack_);
+    if (!dv->loadPack(dir)) {
+        const QString why = dv->error();
+        delete dv;
+        QMessageBox::warning(this, "Trowel",
+            QString("The bundled documentation could not be loaded: %1").arg(why));
+        return nullptr;
+    }
+    auto buf = std::make_unique<Buffer>();
+    buf->view = dv;
+    editorStack_->addWidget(dv);
+    buf->displayName = computeDisplayName(*buf);
+    buffers_.push_back(std::move(buf));
+    const int newIndex = static_cast<int>(buffers_.size()) - 1;
+    connectBufferSignals(newIndex);
+    activateBuffer(newIndex);
+    refreshTabBar();
+    if (!article.isEmpty()) dv->showArticle(article);
+    if (!query.isEmpty()) dv->setQuery(query);
+    return dv;
 }
 
 void MainWindow::openExample(const QString& resourcePath) {

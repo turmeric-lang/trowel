@@ -11,9 +11,16 @@ HookBus::HookBus(PluginHost* host, QObject* parent)
 {
 }
 
-void HookBus::subscribe(const QString& event, TuriValue closure)
+void HookBus::subscribe(const QString& event, TuriEnv* env, TuriValue closure)
 {
-    hooks_[event].append(closure);
+    hooks_[event].append({env, closure});
+}
+
+void HookBus::unsubscribeEnv(TuriEnv* env)
+{
+    for (auto it = hooks_.begin(); it != hooks_.end(); ++it) {
+        it.value().removeIf([env](const Hook& h) { return h.env == env; });
+    }
 }
 
 void HookBus::dispatch(const QString& event, const QVector<TuriValue>& args)
@@ -24,15 +31,17 @@ void HookBus::dispatch(const QString& event, const QVector<TuriValue>& args)
     // Copy the args into a C array for turi_call.
     QVector<TuriValue> argCopy = args;
 
-    for (const auto& closure : it.value()) {
-        // turi_call needs the env; PluginHost provides it.
-        // The closure is a TURI_CLOSURE value from the plugin env.
+    // Iterate a copy: a hook may unload its own plugin (reload), which
+    // mutates hooks_ underneath us.
+    const QVector<Hook> snapshot = it.value();
+    for (const auto& hook : snapshot) {
+        const TuriValue& closure = hook.closure;
         if (closure.tag != TURI_CLOSURE) {
             qWarning("[HookBus] non-closure subscribed to %s", qPrintable(event));
             continue;
         }
         // PluginHost::callClosure does the turi_call and error handling.
-        TuriValue result = host_->callClosure(closure, argCopy);
+        TuriValue result = host_->callClosure(hook.env, closure, argCopy);
         if (turi_is_error(result)) {
             qWarning("[HookBus] hook %s returned error: %s",
                      qPrintable(event),

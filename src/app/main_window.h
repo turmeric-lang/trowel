@@ -128,6 +128,9 @@ public slots:
     // Add one icon button (or a separator) to the vertical side bar.  Public
     // so the plugin native trowel:register-button can call it.
     void addSideBarAction(QAction* action);
+    // Remove the side-bar button backed by `action` (used when a plugin
+    // unloads).  No-op if no button is bound to it.
+    void removeSideBarAction(QAction* action);
     void showSignatureHelp();
     void findSymbolInProject();
     void findSymbolInProjectFor(const QString& query);

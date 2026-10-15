@@ -20,6 +20,7 @@
 #include <QKeyEvent>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTimer>
 
 #include <cstdlib>
 #include <algorithm>
@@ -50,7 +51,7 @@ static int64_t asInt(TuriValue v) {
 
 // (trowel:register-command :id "..." :title "..." :category "..." :key "..." :fn closure)
 // The closure is a zero-argument function called when the command runs.
-static TuriValue native_register_command(TuriEnv* /*env*/, TuriValue* args,
+static TuriValue native_register_command(TuriEnv* env, TuriValue* args,
                                            uint32_t n, void* ud)
 {
     auto* c = ctx(ud);
@@ -65,16 +66,17 @@ static TuriValue native_register_command(TuriEnv* /*env*/, TuriValue* args,
     if (keyStr && *keyStr)
         cmd.shortcut = QKeySequence(QString::fromUtf8(keyStr));
 
-    // args[4] is the closure.  We store it in the handler via the host's
-    // callClosure mechanism.  The closure value is valid for the env's
-    // lifetime, which outlives the registry.
+    // args[4] is the closure.  It must be called in the env that created it
+    // (each plugin has its own), so the handler captures `env` alongside it.
+    // Both stay valid until the plugin unloads, which removes this command.
     TuriValue closure = args[4];
     PluginHost* host = c->host;
-    cmd.handler = [host, closure] {
-        host->callClosure(closure, {});
+    cmd.handler = [host, env, closure] {
+        host->callClosure(env, closure, {});
     };
 
     c->registry->add(cmd);
+    c->contributions[env].commandIds << cmd.id;
     return turi_nil();
 }
 
@@ -82,7 +84,7 @@ static TuriValue native_register_command(TuriEnv* /*env*/, TuriValue* args,
 // The icon string is a hex Nerd Font codepoint, e.g. "0xF0411" for
 // nf-md-playlist_play.  The glyph is rasterized via the same NerdIcon
 // path the built-in side-bar buttons use.
-static TuriValue native_register_button(TuriEnv* /*env*/, TuriValue* args,
+static TuriValue native_register_button(TuriEnv* env, TuriValue* args,
                                          uint32_t n, void* ud)
 {
     auto* c = ctx(ud);
@@ -120,11 +122,12 @@ static TuriValue native_register_button(TuriEnv* /*env*/, TuriValue* args,
         if (c->registry) c->registry->run(commandId);
     });
     c->window->addSideBarAction(action);
+    c->contributions[env].actions << QPointer<QAction>(action);
     return turi_nil();
 }
 
 // (trowel:register-hook :event "..." :fn closure)
-static TuriValue native_register_hook(TuriEnv* /*env*/, TuriValue* args,
+static TuriValue native_register_hook(TuriEnv* env, TuriValue* args,
                                        uint32_t n, void* ud)
 {
     auto* c = ctx(ud);
@@ -133,7 +136,7 @@ static TuriValue native_register_hook(TuriEnv* /*env*/, TuriValue* args,
 
     const QString event = QString::fromUtf8(asCStr(args[0]) ? asCStr(args[0]) : "");
     TuriValue closure = args[1];
-    c->hookBus->subscribe(event, closure);
+    c->hookBus->subscribe(event, env, closure);
     return turi_nil();
 }
 
@@ -341,8 +344,15 @@ static TuriValue native_reload_plugin(TuriEnv* /*env*/, TuriValue* args,
     if (n < 1) return turi_error("reload-plugin needs 1 arg");
     const char* name = asCStr(args[0]);
     if (!name) return turi_error("reload-plugin: name is not a string");
-    bool ok = c->host->reloadPlugin(QString::fromUtf8(name));
-    return turi_bool(ok);
+    // Reloading frees the calling plugin's env, which is on the stack right
+    // now when a plugin reloads itself.  Defer to the event loop.
+    PluginHost* host = c->host;
+    const QString pluginName = QString::fromUtf8(name);
+    if (!host->hasPlugin(pluginName)) return turi_bool(false);
+    QTimer::singleShot(0, host, [host, pluginName] {
+        host->reloadPlugin(pluginName);
+    });
+    return turi_bool(true);
 }
 
 // ---- File I/O natives -------------------------------------------------------

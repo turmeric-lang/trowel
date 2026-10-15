@@ -23,9 +23,14 @@ class HookBus : public QObject {
 public:
     HookBus(PluginHost* host, QObject* parent = nullptr);
 
-    // Subscribe a Turmeric closure to an event.  The closure value is kept
-    // alive by the TuriEnv (which outlives the HookBus).
-    void subscribe(const QString& event, TuriValue closure);
+    // Subscribe a Turmeric closure to an event.  `env` is the plugin env the
+    // closure was created in -- it is the env the closure must be called in.
+    // The closure value is kept alive by that env, so the subscription must be
+    // dropped (unsubscribeEnv) before the env is freed.
+    void subscribe(const QString& event, TuriEnv* env, TuriValue closure);
+
+    // Drop every subscription owned by `env`.  Called when a plugin unloads.
+    void unsubscribeEnv(TuriEnv* env);
 
     // Dispatch an event with the given arguments.  Each registered closure is
     // called via turi_call.  Errors are logged to the status bar and skipped.
@@ -37,7 +42,11 @@ public:
 
 private:
     PluginHost* host_;
-    QHash<QString, QVector<TuriValue>> hooks_;
+    struct Hook {
+        TuriEnv* env;
+        TuriValue closure;
+    };
+    QHash<QString, QVector<Hook>> hooks_;
 };
 
 }  // namespace trowel

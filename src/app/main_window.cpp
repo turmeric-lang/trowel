@@ -872,6 +872,18 @@ void MainWindow::addSideBarAction(QAction* action) {
     sideBarLayout_->insertWidget(sideBarLayout_->count() - 1, button);
 }
 
+void MainWindow::removeSideBarAction(QAction* action) {
+    if (!action || !sideBarLayout_) return;
+    for (int i = 0; i < sideBarLayout_->count(); ++i) {
+        auto* button = qobject_cast<QToolButton*>(sideBarLayout_->itemAt(i)->widget());
+        if (button && button->defaultAction() == action) {
+            sideBarLayout_->takeAt(i);
+            button->deleteLater();
+            return;
+        }
+    }
+}
+
 void MainWindow::addSideBarSeparator() {
     if (!sideBarLayout_) return;
     auto* line = new QFrame(sideBar_->widget());

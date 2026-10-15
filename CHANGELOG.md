@@ -9,6 +9,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 ### Added
+- **Plugin isolation.** Each plugin now runs in its own sandboxed Turmeric
+  environment, so plugins no longer see each other's definitions and reloading
+  one (`trowel-reload-plugin`) leaves the rest untouched; a plugin's commands,
+  side-bar buttons and hooks are removed when it unloads. A plugin can ship a
+  `manifest.tur` with `:capabilities [fs:read fs:write io proc ffi async env
+  import import:plugins]`. Without one a plugin gets no stdlib file, network,
+  process or import access (the `trowel-*` API is unaffected). On first load of
+  a user plugin that requests capabilities, Trowel asks for permission and
+  remembers the answer in `~/.trowel/plugin-permissions.json` until the
+  manifest changes. Bundled plugins are trusted.
 - **Docs pane.** Help → Turmeric Documentation now opens the full Turmeric
   guides and API reference in a tab instead of the website. It leads on the
   quickstart and a Recently Added list, has a browsable nav tree, and a search

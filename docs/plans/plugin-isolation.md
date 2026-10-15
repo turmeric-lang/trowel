@@ -1,6 +1,7 @@
 # Per-plugin isolation — plan
 
-> **Status:** Not started. Split from
+> **Status:** Implemented (I1–I4). Deviations from the plan are listed in
+> §6. Split from
 > [`plugin-system.md`](plugin-system.md) §4.4, where it was a single
 > paragraph marked "future." The plugin system itself (P0–P7) has shipped;
 > this plan is the next security boundary.
@@ -182,3 +183,30 @@ loads skip the prompt unless the manifest changes.
   `turi_env_reset` does not affect the other.
 - **Permission prompt test:** load a plugin with capabilities, verify the
   prompt appears, verify the permission is cached.
+
+## 6. As built — deviations from this plan
+
+- **No shared spice image.** The pinned libturi does not expose
+  `turi_env_set_shared_spice_image`, so the fallback (§2.2 option A) is used:
+  `registerPluginNatives` runs once per plugin env, with a shared
+  `PluginContext`. `PluginHost::env()` remains the host's own env (REPL eval,
+  keymap, syntax plugins) and is the "API env".
+- **Manifest is data.** `manifest.tur` is scanned by the host for
+  `:capabilities [...]` and `:description "..."`; it is never evaluated, so
+  reading it cannot run plugin code.
+- **Imports.** libturi rejects `(import ...)` outright in a sandbox without
+  `TURI_CAP_IMPORT`, so *any* import needs the `import` capability. `import`
+  resolves within the plugin's own directory; `import:plugins` (added here)
+  resolves from the whole plugins directory — that is the cross-plugin case.
+- **Hooks and commands** record the env that created them; `HookBus` and
+  command handlers call closures in that env. Unloading a plugin unsubscribes
+  its hooks, removes its commands and deletes its side-bar buttons before the
+  env is freed. `trowel-reload-plugin` defers to the event loop so a plugin can
+  reload itself.
+- **Prompt override.** `TROWEL_PLUGIN_PERMISSIONS=allow|deny` answers without
+  a dialog (used by the smoke tests; not cached). The dialog itself is not
+  covered by an automated test — nothing can click it under offscreen Qt — but
+  the cache (granted/denied, keyed by manifest sha256) is.
+- **Fuel.** Sandboxed envs keep libturi's default step-fuel limit, which
+  bounds a runaway hook.
+- Tests: `tests/smoke/test_plugin_isolation.py`.

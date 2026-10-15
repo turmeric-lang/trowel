@@ -2,8 +2,11 @@
 
 #include "turi_api.h"
 
+#include <QByteArray>
+#include <QHash>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 class QTimer;
@@ -18,10 +21,28 @@ class EditorView;
 class SyntaxRegistry;
 struct PluginContext;
 
-// PluginHost owns the in-process Turmeric evaluation environment (TuriEnv)
-// and, in later phases, the registered native API, hook bus, and plugin
-// loading.  P0 is the linker proof: it creates an env, evals a string, and
-// reports the result.  No natives, no UI beyond the debug eval action.
+// What a plugin's manifest.tur declares.  The manifest is DATA: the host
+// scans it for `:capabilities [...]` and `:description "..."` and never
+// evaluates it, so reading a manifest cannot run plugin code.
+struct PluginManifest {
+    bool present = false;
+    QString description;
+    QStringList capabilityNames;  // as written: "fs:read", "proc", ...
+    QStringList unknownCapabilities;
+    TuriCaps caps = TURI_CAP_NONE;
+    bool importAllPlugins = false;  // "import:plugins": resolve imports from the plugins root
+    QByteArray hash;  // sha256 hex of the manifest file, for re-prompting
+};
+
+// PluginHost owns the in-process Turmeric environments (TuriEnv), the
+// registered native API, and plugin loading.
+//
+// Isolation model: `env_` is the host's own env ("API env") -- the REPL eval
+// action, keymap.tur and syntax.tur run there, and it holds the trowel-*
+// natives.  Each plugin gets a separate sandboxed env with those natives
+// re-registered into it and only the stdlib capabilities its manifest
+// declares and the user granted.  A plugin cannot see another plugin's
+// definitions, and resetting or freeing one env leaves the rest alone.
 //
 // The host is owned by MainWindow and lives on the Qt main thread.  All
 // turi_eval / turi_call calls happen on this thread -- libturi is not
@@ -46,11 +67,13 @@ public:
     // natives that need to eval in the plugin env).
     TuriValue evalRaw(const char* source);
 
-    // Call a Turmeric closure with the given arguments via turi_call.
-    // Used by HookBus to dispatch events.  Errors are returned as TURI_ERROR.
-    TuriValue callClosure(TuriValue closure, const QVector<TuriValue>& args);
+    // Call a Turmeric closure with the given arguments via turi_call.  `env`
+    // must be the env the closure was created in (the calling env that the
+    // native received).  Errors are returned as TURI_ERROR.
+    TuriValue callClosure(TuriEnv* env, TuriValue closure,
+                          const QVector<TuriValue>& args);
 
-    // The underlying TuriEnv (for native registration and turi_call).
+    // The host (API) TuriEnv: REPL eval, keymap and syntax plugins.
     TuriEnv* env() { return env_; }
 
     // True when the libturi link succeeded and the env is live.  False on
@@ -66,8 +89,18 @@ public:
     // trowel-set-keybinding.  Idempotent: safe to call once.
     void setupNatives();
 
-    // Reload a single plugin by name (clears and re-evals its plugin.tur).
+    // Reload a single plugin by name: tears down its env (and the commands,
+    // buttons and hooks it registered) and loads it afresh.  Other plugins
+    // are untouched.
     bool reloadPlugin(const QString& name);
+
+    // True if `name` is a currently loaded plugin.
+    bool hasPlugin(const QString& name) const { return plugins_.contains(name); }
+    QStringList loadedPlugins() const { return plugins_.keys(); }
+
+    // The capabilities a loaded plugin actually holds (after the permission
+    // check), or TURI_CAP_NONE.  For tests and diagnostics.
+    TuriCaps grantedCaps(const QString& name) const;
 
     // Wire the command registry and hook bus.  Called by MainWindow after
     // constructing the host and before loadAll().
@@ -107,8 +140,28 @@ private:
     SnippetSession* snippet_ = nullptr;
     SyntaxRegistry* syntaxRegistry_ = nullptr;
     QTimer* eventLoopTimer_ = nullptr;
-    QStringList loadedPlugins_;
     PluginContext* pluginCtx_ = nullptr;  // owned by the host
+
+    struct PluginSource {
+        QString path;  // .../plugin.tur (or :/plugins/... when bundled)
+        bool bundled = false;
+    };
+    struct PluginRecord {
+        QString name;
+        TuriEnv* env = nullptr;
+        PluginManifest manifest;
+        TuriCaps granted = TURI_CAP_NONE;
+    };
+    QHash<QString, PluginSource> discovered_;  // name → where it lives
+    QHash<QString, PluginRecord> plugins_;     // name → loaded plugin
+
+    bool loadPlugin(const QString& name, const PluginSource& src);
+    void unloadPlugin(const QString& name);
+    static PluginManifest parseManifest(const QString& manifestPath);
+    // Decide whether the user allows `manifest`'s capabilities for `name`:
+    // consults the cache in ~/.trowel/plugin-permissions.json, prompts on a
+    // miss or a changed manifest, and records the answer.
+    bool capabilitiesAllowed(const QString& name, const PluginManifest& manifest);
 };
 
 }  // namespace trowel
